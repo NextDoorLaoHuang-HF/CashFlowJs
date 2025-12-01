@@ -32,37 +32,10 @@ var FASTTRACK = {
         playerObj.personalAssets.splice(0, playerObj.personalAssets.length);
 
         //new current position
-        var newPosition = 0;
-        switch (player) {
-            case 0:
-                newPosition += 1;
-                break;
-            case 1:
-                newPosition += 7;
-                break;
-            case 2:
-                newPosition += 14;
-                break;
-            case 3:
-                newPosition += 21;
-                break;
-            case 4:
-                newPosition += 27;
-                break;
-            case 5:
-                newPosition += 34;
-                break;
-            case 6:
-                newPosition += 1;
-                break;
-            case 7:
-                newPosition += 7;
-                break;
-        }
+        var fastTrackBoardSize = 40;
+        var spacing = Math.max(1, Math.floor(fastTrackBoardSize / Math.max(1, APP.pCount)));
+        var newPosition = ((player * spacing) % fastTrackBoardSize) + 1;
         //send to board2
-        var oldTokenElement = document.getElementById(
-            "tokenSection" + parseInt(playerObj.position, 10)
-        );
         var playerTokenEle = document.getElementById(
             "player" + parseInt(APP.currentPlayer, 10) + "-piece"
         );
@@ -79,8 +52,12 @@ var FASTTRACK = {
         APP.finance.statement();
     },
     rollDie: function(dieCount) {
-        var die = Math.floor(Math.random() * 6) + 1;
-        return die * dieCount;
+        var diceToRoll = Number(dieCount) || 1;
+        var total = 0;
+        for (var i = 0; i < diceToRoll; i++) {
+            total += Math.floor(Math.random() * 6) + 1;
+        }
+        return total;
     },
     movePlayer: function(dieCount) {
         //move player piece the amount of rolledDie
