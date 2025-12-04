@@ -8,6 +8,9 @@
 - `tests/`: Vitest suites (`*.test.ts`); includes `legacy-smoke.test.ts` guarding baseline DOM.
 - `scripts/`: utility scripts (e.g., syncing legacy assets).
 
+## Architecture Documentation
+- `docs/system-diagram.md` 保存 Mermaid 系统图；每次改动影响模块关系或数据流时，务必同步更新该图，以保证文档与实现保持一致。
+
 ## Build, Test, and Development Commands
 - `npm run dev`: start Vite dev server; `predev` syncs legacy assets into `public/legacy`.
 - `npm run build`: type-checks (`tsc -b`) then Vite production build.

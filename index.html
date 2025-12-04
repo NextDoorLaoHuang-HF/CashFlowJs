@@ -9,10 +9,12 @@
       (() => {
         const params = new URLSearchParams(window.location.search);
         const ui = params.get('ui');
-        // Only redirect when the user explicitly asks for the legacy UI.
-        if (ui === 'legacy') {
+        const wantsNext = ui === 'next';
+        if (!wantsNext) {
+          if (ui === 'legacy') {
+            params.delete('ui');
+          }
           const legacyUrl = new URL('./legacy/index.html', window.location.href);
-          params.delete('ui');
           legacyUrl.search = params.toString() ? `?${params.toString()}` : '';
           window.location.replace(legacyUrl.toString());
         }
@@ -28,7 +30,7 @@
   <body>
     <div id="legacy-optin" style="position: fixed; top: 12px; right: 12px; z-index: 10; font-size: 14px;">
       <a href="?ui=legacy" style="color: #1f2937; background: #f3f4f6; padding: 6px 10px; border-radius: 8px; text-decoration: none; box-shadow: 0 1px 3px rgba(0,0,0,0.12);">
-        切换到旧版界面
+        返回旧版界面
       </a>
     </div>
     <div id="app"></div>

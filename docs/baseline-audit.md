@@ -42,3 +42,7 @@
   - 模拟点击主入口，确保过渡步骤展示了预期的容器（作为 UI 流程守护）。
 - 增加一个快照断言，保证 legacy 构建中核心脚本标签顺序未被破坏。
 - 所有冒烟测试都保持对 `baselines/legacy-v0` 的只读访问，以便后续 refactor 时快速发现破坏性变更。
+
+## 冒烟测试现状
+- `tests/legacy-smoke.test.ts` 通过自定义 `ResourceLoader` 注入 legacy 依赖，在 jsdom 内执行原生脚本并同步 `APP` 事件绑定。
+- 用例除 DOM 结构与脚本顺序断言外，还真实触发 `#home-screen` → `#game-selection-screen` → `#setup-screen` 的点击流，确保阶段 0 入口体验得到守护。
