@@ -105,9 +105,12 @@ export function SetupWizard({ locale, onStart }: SetupWizardProps) {
                   color: "var(--text)"
                 }}
               >
-                {scenarios.map((scenario) => (
-                  <option key={scenario.id} value={scenario.id}>{`${scenario.label} - $${scenario.salary}`}</option>
-                ))}
+                {scenarios.map((scenario) => {
+                  const label = t(locale, `scenario.${scenario.id}.label`);
+                  return (
+                    <option key={scenario.id} value={scenario.id}>{`${label} - $${scenario.salary.toLocaleString()}`}</option>
+                  );
+                })}
               </select>
             </label>
 
@@ -126,7 +129,7 @@ export function SetupWizard({ locale, onStart }: SetupWizardProps) {
               >
                 {dreams.map((dream) => (
                   <option key={dream.id} value={dream.id}>
-                    {dream.title}
+                    {t(locale, `dream.${dream.id}.title`)}
                   </option>
                 ))}
               </select>
@@ -144,7 +147,7 @@ export function SetupWizard({ locale, onStart }: SetupWizardProps) {
             {player.isLLM && (
               <div className="grid" style={{ gap: "0.35rem" }}>
                 <input
-                  placeholder="Model (e.g. gpt-4o-mini)"
+                  placeholder={t(locale, "setup.llmModelPlaceholder")}
                   value={player.llmModel ?? ""}
                   onChange={(e) => updatePlayer(index, { llmModel: e.target.value })}
                   style={{
@@ -156,7 +159,7 @@ export function SetupWizard({ locale, onStart }: SetupWizardProps) {
                   }}
                 />
                 <textarea
-                  placeholder="Persona / strategy prompt"
+                  placeholder={t(locale, "setup.llmPersonaPlaceholder")}
                   value={player.llmPersona ?? ""}
                   onChange={(e) => updatePlayer(index, { llmPersona: e.target.value })}
                   style={{

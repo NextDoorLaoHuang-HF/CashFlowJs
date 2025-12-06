@@ -14,7 +14,7 @@ export function BoardGrid() {
   return (
     <div className="card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
-        <h3 style={{ margin: 0 }}>Board</h3>
+        <h3 style={{ margin: 0 }}>{t(settings.locale, "board.title")}</h3>
         {currentPlayerId && (
           <span style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
             {t(settings.locale, "info.currentPlayer")}: {players.find((p) => p.id === currentPlayerId)?.name}
@@ -30,6 +30,7 @@ export function BoardGrid() {
       >
         {board.map((square) => {
           const occupants = players.filter((player) => player.position === square.id);
+          const label = t(settings.locale, `board.square.${square.type.toLowerCase()}`);
           return (
             <div
               key={square.id}
@@ -44,7 +45,7 @@ export function BoardGrid() {
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <strong style={{ fontSize: "0.85rem" }}>{square.label}</strong>
+                <strong style={{ fontSize: "0.85rem" }}>{label}</strong>
                 <span style={{ color: square.color }}>&#11044;</span>
               </div>
               <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>#{square.id + 1}</div>

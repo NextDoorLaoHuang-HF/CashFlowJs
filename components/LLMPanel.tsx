@@ -78,7 +78,7 @@ export function LLMPanel() {
       </select>
       <input
         type="password"
-        placeholder="Temporary OpenAI API key (optional)"
+        placeholder={t(settings.locale, "llm.apiKeyPlaceholder")}
         value={apiKey}
         onChange={(e) => setApiKey(e.target.value)}
         style={{
@@ -90,7 +90,7 @@ export function LLMPanel() {
         }}
       />
       <textarea
-        placeholder="Additional instructions"
+        placeholder={t(settings.locale, "llm.promptPlaceholder")}
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
         style={{
@@ -116,7 +116,9 @@ export function LLMPanel() {
       </button>
       {result && (
         <div style={{ borderRadius: 10, border: "1px solid rgba(255,255,255,0.08)", padding: "0.5rem" }}>
-          <div style={{ fontSize: "0.85rem", color: "var(--muted)" }}>Decision: {result.decision}</div>
+          <div style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
+            {t(settings.locale, "llm.decision")}: {result.decision}
+          </div>
           <p style={{ margin: "0.35rem 0" }}>{result.summary}</p>
         </div>
       )}

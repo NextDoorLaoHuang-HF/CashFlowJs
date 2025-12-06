@@ -1,16 +1,18 @@
 "use client";
 
+import { t } from "../lib/i18n";
 import { useGameStore } from "../lib/state/gameStore";
 
 export function PlayerSidebar() {
-  const { players, currentPlayerId } = useGameStore((state) => ({
+  const { players, currentPlayerId, locale } = useGameStore((state) => ({
     players: state.players,
-    currentPlayerId: state.currentPlayerId
+    currentPlayerId: state.currentPlayerId,
+    locale: state.settings.locale
   }));
 
   return (
     <div className="card scrollable" style={{ maxHeight: "600px" }}>
-      <h3 style={{ marginTop: 0 }}>Players</h3>
+      <h3 style={{ marginTop: 0 }}>{t(locale, "players.title")}</h3>
       <div className="grid" style={{ gap: "0.75rem" }}>
         {players.map((player) => (
           <div
@@ -43,14 +45,16 @@ export function PlayerSidebar() {
                 fontSize: "0.85rem"
               }}
             >
-              <dt style={{ color: "var(--muted)" }}>Cash</dt>
+              <dt style={{ color: "var(--muted)" }}>{t(locale, "players.cash")}</dt>
               <dd style={{ margin: 0, textAlign: "right" }}>${player.cash.toLocaleString()}</dd>
-              <dt style={{ color: "var(--muted)" }}>Passive</dt>
+              <dt style={{ color: "var(--muted)" }}>{t(locale, "players.passive")}</dt>
               <dd style={{ margin: 0, textAlign: "right" }}>${player.passiveIncome.toLocaleString()}</dd>
-              <dt style={{ color: "var(--muted)" }}>Payday</dt>
+              <dt style={{ color: "var(--muted)" }}>{t(locale, "players.payday")}</dt>
               <dd style={{ margin: 0, textAlign: "right" }}>${player.payday.toLocaleString()}</dd>
-              <dt style={{ color: "var(--muted)" }}>Dream</dt>
-              <dd style={{ margin: 0, textAlign: "right" }}>{player.dream?.title ?? "—"}</dd>
+              <dt style={{ color: "var(--muted)" }}>{t(locale, "players.dream")}</dt>
+              <dd style={{ margin: 0, textAlign: "right" }}>
+                {player.dream ? t(locale, `dream.${player.dream.id}.title`) : "—"}
+              </dd>
             </dl>
           </div>
         ))}

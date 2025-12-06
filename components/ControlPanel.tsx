@@ -85,7 +85,9 @@ export function ControlPanel() {
           <span>
             🎲 {dice.dice[0]} + {dice.dice[1]} = {dice.total}
           </span>
-          <span>Player: {currentPlayerId?.slice(0, 4)}</span>
+          <span>
+            {t(settings.locale, "controls.playerId")}: {currentPlayerId?.slice(0, 4)}
+          </span>
         </div>
       )}
 
@@ -124,11 +126,11 @@ export function ControlPanel() {
               fontSize: "0.85rem"
             }}
           >
-            <dt style={{ color: "var(--muted)" }}>Type</dt>
+            <dt style={{ color: "var(--muted)" }}>{t(settings.locale, "controls.card.type")}</dt>
             <dd style={{ margin: 0, textAlign: "right" }}>{selectedCard.type}</dd>
-            <dt style={{ color: "var(--muted)" }}>Cost</dt>
+            <dt style={{ color: "var(--muted)" }}>{t(settings.locale, "controls.card.cost")}</dt>
             <dd style={{ margin: 0, textAlign: "right" }}>${cardCost.toLocaleString()}</dd>
-            <dt style={{ color: "var(--muted)" }}>Cashflow</dt>
+            <dt style={{ color: "var(--muted)" }}>{t(settings.locale, "controls.card.cashflow")}</dt>
             <dd style={{ margin: 0, textAlign: "right" }}>${cardCashflow.toLocaleString()}</dd>
           </dl>
           <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
@@ -159,7 +161,7 @@ export function ControlPanel() {
           </div>
         </div>
       ) : (
-        <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>Draw a card to view opportunities.</p>
+        <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>{t(settings.locale, "controls.emptyPrompt")}</p>
       )}
     </div>
   );

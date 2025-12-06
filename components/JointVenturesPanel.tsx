@@ -50,13 +50,13 @@ export function JointVenturesPanel() {
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Venture name"
+          placeholder={t(settings.locale, "ventures.namePlaceholder")}
           style={{ borderRadius: 8, padding: "0.45rem 0.65rem", border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.04)", color: "#fff" }}
         />
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          placeholder="Strategy / notes"
+          placeholder={t(settings.locale, "ventures.notesPlaceholder")}
           style={{
             borderRadius: 8,
             padding: "0.45rem 0.65rem",
@@ -71,7 +71,7 @@ export function JointVenturesPanel() {
             type="number"
             value={cashNeeded}
             onChange={(e) => setCashNeeded(Number(e.target.value) || 0)}
-            placeholder="Capital"
+            placeholder={t(settings.locale, "ventures.capitalLabel")}
             style={{
               flex: 1,
               borderRadius: 8,
@@ -85,7 +85,7 @@ export function JointVenturesPanel() {
             type="number"
             value={cashflow}
             onChange={(e) => setCashflow(Number(e.target.value) || 0)}
-            placeholder="Cashflow"
+            placeholder={t(settings.locale, "ventures.cashflowLabel")}
             style={{
               flex: 1,
               borderRadius: 8,
@@ -132,9 +132,9 @@ export function JointVenturesPanel() {
             <strong>{venture.name}</strong>
             <p style={{ margin: "0.25rem 0", color: "var(--muted)", fontSize: "0.85rem" }}>{venture.description}</p>
             <dl style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", margin: 0, fontSize: "0.8rem" }}>
-              <dt>Capital</dt>
+              <dt>{t(settings.locale, "ventures.capitalLabel")}</dt>
               <dd style={{ margin: 0, textAlign: "right" }}>${venture.cashNeeded.toLocaleString()}</dd>
-              <dt>Cashflow</dt>
+              <dt>{t(settings.locale, "ventures.cashflowLabel")}</dt>
               <dd style={{ margin: 0, textAlign: "right" }}>${venture.cashflowImpact.toLocaleString()}</dd>
             </dl>
             <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", marginTop: "0.3rem" }}>
@@ -159,9 +159,9 @@ export function JointVenturesPanel() {
                 padding: "0.35rem"
               }}
             >
-              <option value="forming">Forming</option>
-              <option value="active">Active</option>
-              <option value="closed">Closed</option>
+              <option value="forming">{t(settings.locale, "ventures.status.forming")}</option>
+              <option value="active">{t(settings.locale, "ventures.status.active")}</option>
+              <option value="closed">{t(settings.locale, "ventures.status.closed")}</option>
             </select>
           </div>
         ))}

@@ -265,7 +265,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         state.history = [{ turn: 1, players: players.map((p) => ({ ...p })) }];
       })
     );
-    get().addLog("Game initialized");
+    get().addLog("log.gameInitialized");
   },
   addLog: (message, payload, playerId) => {
     const { settings, phase, turn, logs } = get();
@@ -300,7 +300,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           }
         })
       );
-      get().addLog("Player skips turn", { reason: "Downsized" }, player.id);
+      get().addLog("log.playerSkipsTurn", { reason: "Downsized" }, player.id);
       get().nextPlayer();
       return;
     }
@@ -323,7 +323,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     const newPlayer = get().players.find((p) => p.id === player.id);
     if (newPlayer) {
-      get().addLog("Player rolled", { dice, position: newPlayer.position }, newPlayer.id);
+      get().addLog("log.playerRolled", { dice, position: newPlayer.position }, newPlayer.id);
       get().resolvePayday(newPlayer.id);
     }
   },
@@ -390,7 +390,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       })
     );
     get().addLog(
-      "Deal completed",
+      "log.dealCompleted",
       {
         cardId: card.id,
         cashDelta,
@@ -436,7 +436,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const state = get();
     const boardEntry = state.board[state.players.find((p) => p.id === playerId)?.position ?? 0];
     if (boardEntry) {
-      state.addLog(`Board:${boardEntry.type.toLowerCase()}`, { square: boardEntry }, playerId);
+      state.addLog(`log.board.${boardEntry.type.toLowerCase()}`, { square: boardEntry }, playerId);
     }
   },
   nextPlayer: () => {
@@ -477,7 +477,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         draft.ventures.push(venture);
       })
     );
-    get().addLog("Joint venture created", {
+    get().addLog("log.ventures.created", {
       ventureId: venture.id,
       cashNeeded: venture.cashNeeded,
       participants: venture.participants.map((participant) => ({
@@ -512,7 +512,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     );
     const venture = get().ventures.find((v) => v.id === id);
     if (venture) {
-      get().addLog("Joint venture updated", { ventureId: venture.id, status: venture.status, cashflowImpact: venture.cashflowImpact });
+      get().addLog("log.ventures.updated", { ventureId: venture.id, status: venture.status, cashflowImpact: venture.cashflowImpact });
     }
   },
   addLoan: (loanInput) => {
@@ -539,7 +539,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       })
     );
     if (createdLoan) {
-      get().addLog("Loan created", {
+      get().addLog("log.loans.created", {
         loanId: createdLoan.id,
         principal: createdLoan.principal,
         lender: lenderName,
@@ -571,13 +571,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
       })
     );
     if (repaymentAmount > 0) {
-      get().addLog("Loan repaid", { loanId, amount: repaymentAmount, remaining: remainingBalance });
+      get().addLog("log.loans.repaid", { loanId, amount: repaymentAmount, remaining: remainingBalance });
     }
   },
   clearLog: () => {
     set({ logs: [] });
   },
   recordLLMAction: (playerId, action) => {
-    get().addLog("LLM action", { action }, playerId);
+    get().addLog("log.llmAction", { action }, playerId);
   }
 }));

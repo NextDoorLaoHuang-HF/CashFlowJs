@@ -34,7 +34,7 @@ export function LoansPanel() {
           onChange={(e) => setLender(e.target.value)}
           style={{ borderRadius: 8, padding: "0.45rem 0.65rem", border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.04)", color: "#fff" }}
         >
-          <option value="">Lender</option>
+          <option value="">{t(settings.locale, "loans.lender")}</option>
           {players.map((player) => (
             <option key={player.id} value={player.id}>
               {player.name}
@@ -46,7 +46,7 @@ export function LoansPanel() {
           onChange={(e) => setBorrower(e.target.value)}
           style={{ borderRadius: 8, padding: "0.45rem 0.65rem", border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.04)", color: "#fff" }}
         >
-          <option value="">Borrower</option>
+          <option value="">{t(settings.locale, "loans.borrower")}</option>
           {players.map((player) => (
             <option key={player.id} value={player.id}>
               {player.name}
@@ -58,7 +58,7 @@ export function LoansPanel() {
             type="number"
             value={principal}
             onChange={(e) => setPrincipal(Number(e.target.value) || 0)}
-            placeholder="Principal"
+            placeholder={t(settings.locale, "loans.principal")}
             style={{
               flex: 1,
               borderRadius: 8,
@@ -72,7 +72,7 @@ export function LoansPanel() {
             type="number"
             value={rate}
             onChange={(e) => setRate(Number(e.target.value) || 0)}
-            placeholder="APR %"
+            placeholder={t(settings.locale, "loans.apr")}
             style={{
               width: "120px",
               borderRadius: 8,
@@ -109,13 +109,15 @@ export function LoansPanel() {
                 ${loan.principal.toLocaleString()} @ {loan.rate}%
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.35rem" }}>
-                <span style={{ fontSize: "0.85rem" }}>Remaining: ${loan.remaining.toLocaleString()}</span>
+                <span style={{ fontSize: "0.85rem" }}>
+                  {t(settings.locale, "loans.remaining")}: ${loan.remaining.toLocaleString()}
+                </span>
                 {loan.status === "active" && (
                   <button
                     onClick={() => repayLoan(loan.id, loan.remaining)}
                     style={{ borderRadius: 999, padding: "0.3rem 0.75rem", background: "rgba(34,197,94,0.3)", color: "#fff" }}
                   >
-                    Payoff
+                    {t(settings.locale, "loans.payoff")}
                   </button>
                 )}
               </div>
