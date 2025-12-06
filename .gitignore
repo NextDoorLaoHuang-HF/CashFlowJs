@@ -2,3 +2,10 @@
 docs/change log
 
 node_modules
+.next
+.env.local
+.env.development.local
+.env.production.local
+.env.test.local
+out
+dist

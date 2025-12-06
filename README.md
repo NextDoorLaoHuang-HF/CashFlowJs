@@ -1,44 +1,63 @@
-## CashFlowJs
+## CashFlowJs (Vercel 版本)
 
-**CashFlowJs** is an adaptation of the CashFlow 101 board game with additional gameplay options and rule customization that allows for many unique ways to play. 
+本仓库包含使用 **Next.js 14 + TypeScript** 重建的现代化 CashFlowJs 版本。
+游戏逻辑从原始项目移植而来，但新的 UI 采用组件驱动、支持本地化，并已准备好部署到 Vercel。
 
-* Practice real world investing.
-* Employ financial strategies.
-* Leverage assets and liabilaties.
+### 主要特性
 
-### Play game at https://sleighs.github.io/CashFlowJs/
+- ✅ **Next.js App Router**，客户端组件，零配置 Vercel 部署
+- ✅ **中英文** 本地化支持，即时切换
+- ✅ **完整游戏记录器**（可导出 JSON 日志用于回放/复盘）
+- ✅ **合资引擎**，玩家可以组建联合投资
+- ✅ **玩家间借贷**，包含追踪和还款流程
+- ✅ **LLM 驱动的玩家** – 接入 OpenAI 密钥即可获得自主的沙盒对手
 
-## Features
+> 历史版本的静态实现保留在 `legacy/` 目录下供参考。所有新游戏功能都在 `app/` 目录中实现。
 
-### New Game Modes
-* Fast Track Mode - Each player starts with a big bank acount and random asset
-* Hard Mode - Extra doodads, limited loans
-* Same Career Mode - Each player starts with the same career, savings, and debts
+---
 
-### New Rule Customization
-* Insurance - Players can avoid downsizing by paying an insurance fee each paycheck
-* Big Families - Raise the limit of children players can have
-* Liquidating Assets - Players can sell off assets for 50% back to the bank when under threat of bankruptcy
-* Doodads with Paychecks - More doodads. Players who land on the paycheck space will also get a doodad card
-* Mortgage Payments - Adds realistic mortgage payments
-* Job choice - Option to choose jobs
-* Speed Start - Players start with their total income in their savings
+[📖 English Version](/docs/README.md) | 中文版
 
-## Features In Development
+## 快速开始
 
-### Game Modes
-* Team Mode - Players play in pairs
-* Magnate Mode - Bigger deals, partnership agreements, limited property
+```bash
+npm install
+npm run dev
+```
 
-### Rule Customization
-* Joint Ventures - Players can partner up to invest together on opportunities
-* Mixed Deals - Both small and big oppurtunity cards are shuffled together and players choose from the entire deck
-* Random Downsizing - Players roll for a random amount of missed turns after downsizing
-* Loan Sharking - Players can give loans to other players
+打开 http://localhost:3000 即可开始新的游戏体验。
 
-(This is a fan creation made for my own amusement. This game is not sold or distributed. I do not own or have rights to the *CashFlow* trademark.)
+### 环境配置
 
+LLM 助手需要 `OPENAI_API_KEY`。你可以：
 
+- 在 `.env.local` 中设置 `OPENAI_API_KEY`，或者
+- 在"LLM 玩家控制台"中提供临时密钥后再运行提示。
+
+## 项目结构
+
+```
+app/                 Next.js App Router 入口
+components/          可重用的 UI 组件
+lib/data/            游戏板、场景和卡片数据（从 legacy 移植）
+lib/state/           Zustand/Immer 游戏状态管理和引擎
+legacy/              原始静态资源（供参考）
+```
+
+## 脚本命令
+
+- `npm run dev` – 启动本地开发服务器
+- `npm run build` – 生产构建（Vercel 使用的版本）
+- `npm run start` – 启动编译后的构建版本
+- `npm run lint` – 源码检查
+
+## 备注
+
+- 游戏数据（卡片、游戏板格子、场景、梦想）与原始规则保持一致。
+- 日志可以导出为 JSON 格式，用于回顾每一步操作（"复盘"）。
+- 合资和贷款在交易达成时会自动调整玩家的现金和被动收入，因此记录的条目始终与游戏中的资产负债表匹配。
+
+本项目仍然是一个受 CashFlow 101 启发的粉丝制作项目。游戏机制仅供教育目的使用，CashFlow 商标归其各自所有者所有。
 
 
 
