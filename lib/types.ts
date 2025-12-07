@@ -8,6 +8,8 @@ export type BaseCard = {
   name: string;
   description: string;
   rule?: string;
+  rule1?: string;
+  rule2?: string;
   deckKey?: string;
   [key: string]: unknown;
 };

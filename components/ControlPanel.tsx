@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { t } from "../lib/i18n";
+import { translateCardText } from "../lib/cardTranslations";
 import type { BaseCard } from "../lib/types";
 import { type DeckKey, useGameStore } from "../lib/state/gameStore";
 
@@ -112,12 +113,27 @@ export function ControlPanel() {
       {selectedCard ? (
         <div style={{ borderRadius: 12, border: "1px dashed rgba(255,255,255,0.2)", padding: "0.75rem" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <strong>{selectedCard.name}</strong>
+            <strong>{translateCardText(settings.locale, selectedCard.name)}</strong>
             <button onClick={clearCard} style={{ background: "transparent", color: "var(--muted)" }}>
               ✕
             </button>
           </div>
-          <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>{selectedCard.description}</p>
+          <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>{translateCardText(settings.locale, selectedCard.description)}</p>
+          {selectedCard.rule && (
+            <p style={{ color: "var(--accent)", fontSize: "0.85rem", fontStyle: "italic" }}>
+              {translateCardText(settings.locale, selectedCard.rule)}
+            </p>
+          )}
+          {selectedCard.rule1 && (
+            <p style={{ color: "var(--accent)", fontSize: "0.85rem", fontStyle: "italic" }}>
+              {translateCardText(settings.locale, selectedCard.rule1)}
+            </p>
+          )}
+          {selectedCard.rule2 && (
+            <p style={{ color: "var(--accent)", fontSize: "0.85rem", fontStyle: "italic" }}>
+              {translateCardText(settings.locale, selectedCard.rule2)}
+            </p>
+          )}
           <dl
             style={{
               display: "grid",
@@ -127,7 +143,7 @@ export function ControlPanel() {
             }}
           >
             <dt style={{ color: "var(--muted)" }}>{t(settings.locale, "controls.card.type")}</dt>
-            <dd style={{ margin: 0, textAlign: "right" }}>{selectedCard.type}</dd>
+            <dd style={{ margin: 0, textAlign: "right" }}>{translateCardText(settings.locale, selectedCard.type)}</dd>
             <dt style={{ color: "var(--muted)" }}>{t(settings.locale, "controls.card.cost")}</dt>
             <dd style={{ margin: 0, textAlign: "right" }}>${cardCost.toLocaleString()}</dd>
             <dt style={{ color: "var(--muted)" }}>{t(settings.locale, "controls.card.cashflow")}</dt>
