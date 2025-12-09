@@ -21,6 +21,8 @@ export type BoardLocation = {
   color: string;
 };
 
+export type PlayerTrack = "ratRace" | "fastTrack";
+
 export type Asset = {
   id: string;
   name: string;
@@ -62,11 +64,17 @@ export type Player = {
   llmModel?: string;
   llmPersona?: string;
   fastTrackUnlocked: boolean;
+  track: PlayerTrack;
 };
 
 export type DiceRoll = {
-  dice: [number, number];
+  dice: number[];
   total: number;
+};
+
+export type CharityPrompt = {
+  playerId: string;
+  amount: number;
 };
 
 export type JointVentureParticipant = {
@@ -117,6 +125,7 @@ export type GameSettings = {
   enableBigDeals: boolean;
   enableSmallDeals: boolean;
   enableLLMPlayers: boolean;
+  useCashflowDice: boolean;
 };
 
 export type LLMRequest = {

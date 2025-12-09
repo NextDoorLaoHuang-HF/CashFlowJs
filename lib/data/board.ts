@@ -5,7 +5,12 @@ export type BoardSquareType =
   | "PAYCHECK"
   | "OFFER"
   | "CHILD"
-  | "DOWNSIZE";
+  | "DOWNSIZE"
+  | "FAST_PAYDAY"
+  | "FAST_OPPORTUNITY"
+  | "FAST_DONATION"
+  | "FAST_PENALTY"
+  | "FAST_DREAM";
 
 export type BoardSquare = {
   id: number;
@@ -42,6 +47,28 @@ const rawSquares: Array<[BoardSquareType, string]> = [
 ];
 
 export const boardSquares: BoardSquare[] = rawSquares.map(([type, color], index) => ({
+  id: index,
+  type,
+  label: type,
+  color
+}));
+
+const fastTrackRaw: Array<[BoardSquareType, string]> = [
+  ["FAST_PAYDAY", "#fbbf24"],
+  ["FAST_OPPORTUNITY", "#0ea5e9"],
+  ["FAST_PENALTY", "#ef4444"],
+  ["FAST_OPPORTUNITY", "#0ea5e9"],
+  ["FAST_DONATION", "#c084fc"],
+  ["FAST_PAYDAY", "#fbbf24"],
+  ["FAST_OPPORTUNITY", "#0ea5e9"],
+  ["FAST_DREAM", "#22c55e"],
+  ["FAST_PENALTY", "#ef4444"],
+  ["FAST_OPPORTUNITY", "#0ea5e9"],
+  ["FAST_DONATION", "#c084fc"],
+  ["FAST_OPPORTUNITY", "#0ea5e9"]
+];
+
+export const fastTrackSquares: BoardSquare[] = fastTrackRaw.map(([type, color], index) => ({
   id: index,
   type,
   label: type,

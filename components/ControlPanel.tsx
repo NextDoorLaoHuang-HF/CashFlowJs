@@ -38,21 +38,66 @@ const extractCardCashflow = (card: BaseCard) => {
 };
 
 export function ControlPanel() {
-  const { rollDice, drawCard, completeDeal, clearCard, selectedCard, dice, settings, nextPlayer, currentPlayerId } =
-    useGameStore((state) => ({
-      rollDice: state.rollDice,
-      drawCard: state.drawCard,
-      completeDeal: state.completeDeal,
-      clearCard: state.clearCard,
-      selectedCard: state.selectedCard,
-      dice: state.dice,
-      settings: state.settings,
-      nextPlayer: state.nextPlayer,
-      currentPlayerId: state.currentPlayerId
-    }));
+  const {
+    rollDice,
+    drawCard,
+    completeDeal,
+    clearCard,
+    selectedCard,
+    dice,
+    settings,
+    nextPlayer,
+    currentPlayerId,
+    charityPrompt,
+    donateCharity,
+    skipCharity,
+    board,
+    fastTrackBoard,
+    players,
+    enterFastTrack
+  } = useGameStore((state) => ({
+    rollDice: state.rollDice,
+    drawCard: state.drawCard,
+    completeDeal: state.completeDeal,
+    clearCard: state.clearCard,
+    selectedCard: state.selectedCard,
+    dice: state.dice,
+    settings: state.settings,
+    nextPlayer: state.nextPlayer,
+    currentPlayerId: state.currentPlayerId,
+    charityPrompt: state.charityPrompt,
+    donateCharity: state.donateCharity,
+    skipCharity: state.skipCharity,
+    board: state.board,
+    fastTrackBoard: state.fastTrackBoard,
+    players: state.players,
+    enterFastTrack: state.enterFastTrack
+  }));
 
   const cardCost = useMemo(() => (selectedCard ? extractCardCost(selectedCard) : 0), [selectedCard]);
   const cardCashflow = useMemo(() => (selectedCard ? extractCardCashflow(selectedCard) : 0), [selectedCard]);
+  const currentPlayer = useMemo(() => players.find((player) => player.id === currentPlayerId), [players, currentPlayerId]);
+  const currentSquare = useMemo(() => {
+    if (!currentPlayer) return undefined;
+    const trackSquares = currentPlayer.track === "fastTrack" ? fastTrackBoard : board;
+    return trackSquares[currentPlayer.position];
+  }, [board, fastTrackBoard, currentPlayer]);
+  const isOpportunitySquare = currentPlayer?.track === "ratRace" && currentSquare?.type === "OPPORTUNITY";
+  const dealsDisabled = !settings.enableSmallDeals && !settings.enableBigDeals;
+  const charityPending = charityPrompt && charityPrompt.playerId === currentPlayerId;
+
+  const canDrawDeck = (deck: DeckKey) => {
+    if (!currentPlayer || currentPlayer.track === "fastTrack") {
+      return false;
+    }
+    if (deck === "smallDeals") {
+      return settings.enableSmallDeals && isOpportunitySquare;
+    }
+    if (deck === "bigDeals") {
+      return settings.enableBigDeals && isOpportunitySquare;
+    }
+    return true;
+  };
 
   const isExpense = selectedCard ? cardCashflow <= 0 && selectedCard.type?.toLowerCase().includes("doodad") : false;
 
@@ -61,6 +106,7 @@ export function ControlPanel() {
       <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
         <button
           onClick={rollDice}
+          disabled={charityPending}
           style={{ flex: "1 1 150px", padding: "0.75rem", borderRadius: 12, background: "rgba(68, 208, 123, 0.2)", color: "#fff" }}
         >
           {t(settings.locale, "controls.roll")}
@@ -71,7 +117,18 @@ export function ControlPanel() {
         >
           {t(settings.locale, "controls.endTurn")}
         </button>
+        {currentPlayer && currentPlayer.fastTrackUnlocked && currentPlayer.track === "ratRace" && (
+          <button
+            onClick={() => enterFastTrack(currentPlayer.id)}
+            style={{ flex: "1 1 150px", padding: "0.75rem", borderRadius: 12, background: "rgba(251, 191, 36, 0.2)", color: "#fff" }}
+          >
+            {t(settings.locale, "controls.fastTrack")}
+          </button>
+        )}
       </div>
+      {settings.useCashflowDice && (
+        <p style={{ margin: 0, fontSize: "0.85rem", color: "var(--muted)" }}>{t(settings.locale, "controls.roll.cashflowModeInfo")}</p>
+      )}
 
       {dice && (
         <div
@@ -83,32 +140,86 @@ export function ControlPanel() {
             justifyContent: "space-between"
           }}
         >
-          <span>
-            🎲 {dice.dice[0]} + {dice.dice[1]} = {dice.total}
-          </span>
+          <span>🎲 {dice.dice.join(" + ")} = {dice.total}</span>
           <span>
             {t(settings.locale, "controls.playerId")}: {currentPlayerId?.slice(0, 4)}
           </span>
         </div>
       )}
 
+      {charityPrompt && charityPrompt.playerId === currentPlayerId && (
+        <div
+          className="card"
+          style={{
+            background: "rgba(14,165,233,0.08)",
+            border: "1px solid rgba(14,165,233,0.25)",
+            borderRadius: 12,
+            padding: "0.75rem",
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.35rem"
+          }}
+        >
+          <strong>{t(settings.locale, "controls.charity.title")}</strong>
+          <p style={{ margin: 0, fontSize: "0.9rem", color: "var(--muted)" }}>{t(settings.locale, "controls.charity.prompt")}</p>
+          <div style={{ fontSize: "0.85rem", color: "var(--text)" }}>
+            {t(settings.locale, "controls.charity.amountLabel")}: ${charityPrompt.amount.toLocaleString()}
+          </div>
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <button
+              onClick={donateCharity}
+              style={{
+                padding: "0.4rem 0.75rem",
+                borderRadius: 10,
+                flex: 1,
+                background: "rgba(34,197,94,0.25)",
+                color: "#fff"
+              }}
+            >
+              {t(settings.locale, "controls.charity.donate")}
+            </button>
+            <button
+              onClick={skipCharity}
+              style={{
+                padding: "0.4rem 0.75rem",
+                borderRadius: 10,
+                flex: 1,
+                background: "rgba(255,255,255,0.08)",
+                color: "#fff"
+              }}
+            >
+              {t(settings.locale, "controls.charity.skip")}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
-        {deckOrder.map((deck) => (
-          <button
-            key={deck}
-            onClick={() => drawCard(deck)}
-            style={{
-              padding: "0.65rem",
-              borderRadius: 10,
-              flex: "1 1 calc(50% - 0.5rem)",
-              background: "rgba(255,255,255,0.04)",
-              color: "#fff"
-            }}
-          >
-            {t(settings.locale, deckLabels[deck])}
-          </button>
-        ))}
+        {deckOrder.map((deck) => {
+          const enabled = canDrawDeck(deck) && !charityPending;
+          return (
+            <button
+              key={deck}
+              onClick={() => drawCard(deck)}
+              disabled={!enabled}
+              style={{
+                padding: "0.65rem",
+                borderRadius: 10,
+                flex: "1 1 calc(50% - 0.5rem)",
+                background: enabled ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.02)",
+                color: enabled ? "#fff" : "rgba(255,255,255,0.4)",
+                cursor: enabled ? "pointer" : "not-allowed",
+                border: enabled ? "1px solid transparent" : "1px dashed rgba(255,255,255,0.1)"
+              }}
+            >
+              {t(settings.locale, deckLabels[deck])}
+            </button>
+          );
+        })}
       </div>
+      {isOpportunitySquare && dealsDisabled && (
+        <p style={{ margin: 0, fontSize: "0.85rem", color: "#f97316" }}>{t(settings.locale, "controls.draw.noDealsWarning")}</p>
+      )}
 
       {selectedCard ? (
         <div style={{ borderRadius: 12, border: "1px dashed rgba(255,255,255,0.2)", padding: "0.75rem" }}>

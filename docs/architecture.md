@@ -36,7 +36,7 @@ flowchart TB
 
 ## 关键说明
 - 页面层：`app/layout.tsx` 提供全局样式与字体，`app/page.tsx` 组合 UI 组件并读取 store 状态决定展示（准备阶段的 SetupWizard 与对局主界面切换）。
-- 状态引擎：`lib/state/gameStore.ts` 以 Zustand + Immer 管理游戏状态、卡组、日志、合资与借贷动作，初始化时从 `lib/data` 克隆并洗牌卡组。
+- 状态引擎：`lib/state/gameStore.ts` 以 Zustand + Immer 管理游戏状态、卡组、日志、合资与借贷动作，负责老鼠赛跑与快车道双棋盘（`boardSquares` / `fastTrackSquares`）的同步，以及初始化时从 `lib/data` 克隆并洗牌卡组。
 - 数据与类型：`lib/data/*` 提供静态棋盘/卡牌/场景/梦想数据，`lib/types.ts` 定义共享实体，`lib/i18n.ts` 提供多语言文案查找。
 - LLM 代理：`components/LLMPanel.tsx` 通过 `/api/llm` 将截取的游戏状态发送到 `app/api/llm/route.ts`，后者代理到 OpenAI（`OPENAI_API_KEY` 或用户临时 key），返回 JSON 化动作建议；日志入库由客户端调用 `recordLLMAction`（Zustand store）完成。
 - 视觉层：`app/globals.css` 定义主题 token、布局与卡片基础样式，组件内采用轻量 inline 样式按需覆盖。

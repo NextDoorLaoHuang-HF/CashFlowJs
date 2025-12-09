@@ -35,6 +35,19 @@ export function PlayerSidebar() {
                 }}
               />
               <strong>{player.name}</strong>
+              {player.track === "fastTrack" && (
+                <span
+                  style={{
+                    fontSize: "0.7rem",
+                    padding: "0.1rem 0.4rem",
+                    borderRadius: 999,
+                    background: "rgba(251,191,36,0.2)",
+                    color: "var(--text)"
+                  }}
+                >
+                  {t(locale, "players.track.fastTrack")}
+                </span>
+              )}
             </div>
             <dl
               style={{

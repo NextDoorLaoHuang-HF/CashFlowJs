@@ -4,13 +4,15 @@ import { useState } from "react";
 import { dreams, scenarios } from "../lib/data/scenarios";
 import { t } from "../lib/i18n";
 import type { Locale } from "../lib/types";
-import type { SetupPlayer } from "../lib/state/gameStore";
+import { useGameStore, type SetupPlayer } from "../lib/state/gameStore";
+import type { GameSettings } from "../lib/types";
 
 const colorPalette = ["#10b981", "#f97316", "#f43f5e", "#3b82f6", "#a855f7", "#eab308", "#0ea5e9", "#facc15"];
 
 type SetupWizardProps = {
   locale: Locale;
-  onStart: (players: SetupPlayer[]) => void;
+  initialSettings?: GameSettings;
+  onStart: (players: SetupPlayer[], settings: Partial<GameSettings>) => void;
 };
 
 type PlayerForm = SetupPlayer;
@@ -22,8 +24,23 @@ const defaultPlayer = (index: number): PlayerForm => ({
   dreamId: dreams[index % dreams.length].id
 });
 
-export function SetupWizard({ locale, onStart }: SetupWizardProps) {
+const savingsOptions: Array<{ value: GameSettings["startingSavingsMode"]; label: string }> = [
+  { value: "normal", label: "setup.settings.starting.normal" },
+  { value: "salary", label: "setup.settings.starting.salary" },
+  { value: "double-salary", label: "setup.settings.starting.double" },
+  { value: "none", label: "setup.settings.starting.none" }
+];
+
+export function SetupWizard({ locale, initialSettings, onStart }: SetupWizardProps) {
   const [players, setPlayers] = useState<PlayerForm[]>([defaultPlayer(0)]);
+  const storeSettings = useGameStore((state) => state.settings);
+  const [settings, setSettings] = useState<Partial<GameSettings>>({
+    startingSavingsMode: initialSettings?.startingSavingsMode ?? storeSettings.startingSavingsMode,
+    enableBigDeals: initialSettings?.enableBigDeals ?? storeSettings.enableBigDeals,
+    enableSmallDeals: initialSettings?.enableSmallDeals ?? storeSettings.enableSmallDeals,
+    enablePreferredStock: initialSettings?.enablePreferredStock ?? storeSettings.enablePreferredStock,
+    useCashflowDice: initialSettings?.useCashflowDice ?? storeSettings.useCashflowDice
+  });
 
   const updatePlayer = (index: number, patch: Partial<PlayerForm>) => {
     setPlayers((prev) => prev.map((player, idx) => (idx === index ? { ...player, ...patch } : player)));
@@ -36,6 +53,8 @@ export function SetupWizard({ locale, onStart }: SetupWizardProps) {
   const removePlayer = (index: number) => {
     setPlayers((prev) => prev.filter((_, idx) => idx !== index));
   };
+
+  const dealsDisabled = !(settings.enableSmallDeals ?? true) && !(settings.enableBigDeals ?? true);
 
   return (
     <div className="card grid" style={{ gap: "1.5rem" }}>
@@ -190,17 +209,88 @@ export function SetupWizard({ locale, onStart }: SetupWizardProps) {
           {t(locale, "setup.addPlayer")}
         </button>
         <button
-          onClick={() => onStart(players)}
+          onClick={() => onStart(players, settings)}
+          disabled={dealsDisabled}
           style={{
             padding: "0.65rem 1.25rem",
-            background: "linear-gradient(120deg, var(--accent), var(--accent-strong))",
+            background: dealsDisabled ? "rgba(255,255,255,0.08)" : "linear-gradient(120deg, var(--accent), var(--accent-strong))",
             borderRadius: 999,
-            color: "#04101f",
-            fontWeight: 600
+            color: dealsDisabled ? "var(--muted)" : "#04101f",
+            fontWeight: 600,
+            cursor: dealsDisabled ? "not-allowed" : "pointer"
           }}
         >
           {t(locale, "setup.start")}
         </button>
+      </div>
+
+      <div className="card" style={{ background: "rgba(255,255,255,0.02)", display: "grid", gap: "0.75rem" }}>
+        <div>
+          <strong>{t(locale, "setup.settings.title")}</strong>
+          <p style={{ margin: "0.25rem 0 0", color: "var(--muted)", fontSize: "0.9rem" }}>{t(locale, "setup.settings.subtitle")}</p>
+        </div>
+
+        <label className="grid" style={{ gap: "0.35rem" }}>
+          <span style={{ color: "var(--muted)" }}>{t(locale, "setup.settings.startingLabel")}</span>
+          <select
+            value={settings.startingSavingsMode}
+            onChange={(e) => setSettings((prev) => ({ ...prev, startingSavingsMode: e.target.value as GameSettings["startingSavingsMode"] }))}
+            style={{
+              background: "rgba(255,255,255,0.05)",
+              borderRadius: 8,
+              border: "1px solid rgba(255,255,255,0.08)",
+              padding: "0.5rem 0.75rem",
+              color: "var(--text)"
+            }}
+          >
+            {savingsOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {t(locale, option.label)}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.9rem" }}>
+            <input
+              type="checkbox"
+              checked={settings.enableSmallDeals ?? true}
+              onChange={(e) => setSettings((prev) => ({ ...prev, enableSmallDeals: e.target.checked }))}
+            />
+            <span>{t(locale, "setup.settings.enableSmallDeals")}</span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.9rem" }}>
+            <input
+              type="checkbox"
+              checked={settings.enableBigDeals ?? true}
+              onChange={(e) => setSettings((prev) => ({ ...prev, enableBigDeals: e.target.checked }))}
+            />
+            <span>{t(locale, "setup.settings.enableBigDeals")}</span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.9rem" }}>
+            <input
+              type="checkbox"
+              checked={settings.enablePreferredStock ?? true}
+              onChange={(e) => setSettings((prev) => ({ ...prev, enablePreferredStock: e.target.checked }))}
+            />
+            <span>{t(locale, "setup.settings.enablePreferredStock")}</span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.9rem" }}>
+            <input
+              type="checkbox"
+              checked={settings.useCashflowDice ?? true}
+              onChange={(e) => setSettings((prev) => ({ ...prev, useCashflowDice: e.target.checked }))}
+            />
+            <span>{t(locale, "setup.settings.cashflowDice")}</span>
+          </label>
+          <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--muted)" }}>{t(locale, "setup.settings.cashflowDiceHint")}</p>
+          {dealsDisabled && (
+            <p style={{ margin: 0, fontSize: "0.85rem", color: "#f87171" }}>
+              {t(locale, "setup.settings.dealsDisabledWarning")}
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );

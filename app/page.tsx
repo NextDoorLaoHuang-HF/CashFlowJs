@@ -31,7 +31,11 @@ export default function Page() {
       </header>
 
       {phase === "setup" || players.length === 0 ? (
-        <SetupWizard locale={settings.locale} onStart={(configuredPlayers) => initGame({ players: configuredPlayers })} />
+        <SetupWizard
+          locale={settings.locale}
+          initialSettings={settings}
+          onStart={(configuredPlayers, configuredSettings) => initGame({ players: configuredPlayers, settings: configuredSettings })}
+        />
       ) : (
         <div className="grid dashboard" style={{ gridTemplateColumns: "2.1fr 0.9fr", gap: "1.25rem" }}>
           <div className="grid" style={{ gap: "1.25rem" }}>
