@@ -150,6 +150,8 @@ const cloneDeck = (deck: Record<string, BaseCard>): BaseCard[] =>
     id: deck[key].id ?? key
   }));
 
+const roundToNearestThousand = (value: number): number => Math.ceil(value / 1000) * 1000;
+
 const shuffle = <T,>(list: T[]): T[] => {
   const copy = [...list];
   for (let i = copy.length - 1; i > 0; i -= 1) {
@@ -172,6 +174,12 @@ const getNumericField = (card: BaseCard, fields: string[]): number | undefined =
 const deriveAssetCost = (card: BaseCard, fallback: number): number => {
   const value = getNumericField(card, ["cost", "price", "amount", "value", "totalCost"]);
   return typeof value === "number" ? Math.abs(value) : Math.abs(fallback);
+};
+
+const getLandType = (card: BaseCard): string | undefined => {
+  const landType = typeof card.landType === "string" ? card.landType : undefined;
+  const tag = typeof card.tag === "string" ? card.tag : undefined;
+  return (landType ?? tag)?.toLowerCase();
 };
 
 const deriveCardCashflow = (card: BaseCard, provided?: number): number => {
@@ -205,6 +213,104 @@ const inferAssetCategory = (card: BaseCard): Asset["category"] => {
     return "collectible";
   }
   return "other";
+};
+
+type BankLoanResult = { principal: number; payment: number } | null;
+
+const applyBankLoan = (player: Player, amountNeeded: number): BankLoanResult => {
+  const principal = roundToNearestThousand(amountNeeded);
+  if (principal <= 0) return null;
+  const payment = Math.round(principal * 0.1);
+  player.cash += principal;
+  player.liabilities.push({
+    id: `bank-loan-${uuid()}`,
+    name: "Bank Loan",
+    payment,
+    balance: principal,
+    category: "loan",
+    metadata: { bank: true }
+  });
+  player.totalExpenses += payment;
+  recalcPlayerIncome(player);
+  return { principal, payment };
+};
+
+type OfferOutcome = {
+  cashGain: number;
+  passiveDelta: number;
+  affectedAssets: string[];
+};
+
+const matchesOffer = (asset: Asset, card: BaseCard): boolean => {
+  const offerType = (card.type ?? "").toString().toLowerCase();
+  const landType = (asset.metadata?.landType ?? asset.name).toString().toLowerCase();
+
+  if (offerType === "plex") {
+    return /plex/.test(landType) || landType === "duplex";
+  }
+  if (offerType === "apartment") {
+    if (!(landType === "apartment" || /unit/.test(landType))) return false;
+    const minUnits = typeof card.lowestUnit === "number" ? card.lowestUnit : 0;
+    const units = typeof asset.metadata?.units === "number" ? asset.metadata.units : 0;
+    return units >= minUnits;
+  }
+  if (offerType === "limited") {
+    return landType.includes("limited");
+  }
+  if (offerType === "business") {
+    return asset.category === "business";
+  }
+  if (offerType === "widget" || offerType === "software") {
+    return landType.includes(offerType);
+  }
+  if (offerType === "mall" || offerType === "car wash") {
+    return landType.includes(offerType);
+  }
+  if (offerType === "krugerrands" || offerType === "1500's spanish") {
+    return landType.includes(offerType.split(" ")[0]);
+  }
+  return landType === offerType;
+};
+
+const processOfferCard = (card: BaseCard, target: Player): OfferOutcome => {
+  const outcome: OfferOutcome = { cashGain: 0, passiveDelta: 0, affectedAssets: [] };
+  const cashflowOnly = typeof card.cashFlow === "number" && card.offer === undefined && card.offerPerUnit === undefined;
+
+  target.assets = target.assets.reduce<Asset[]>((kept, asset) => {
+    if (!matchesOffer(asset, card)) {
+      kept.push(asset);
+      return kept;
+    }
+
+    if (cashflowOnly) {
+      outcome.passiveDelta += card.cashFlow as number;
+      kept.push({ ...asset, cashflow: asset.cashflow + (card.cashFlow as number) });
+      return kept;
+    }
+
+    const units = typeof asset.metadata?.units === "number" ? asset.metadata.units : 1;
+    const salePrice = typeof card.offerPerUnit === "number" ? card.offerPerUnit * units : (typeof card.offer === "number" ? card.offer : 0);
+    const mortgage = typeof asset.metadata?.mortgage === "number" ? asset.metadata.mortgage : 0;
+    const net = Math.max(salePrice - mortgage, 0);
+    outcome.cashGain += net;
+    outcome.passiveDelta -= asset.cashflow;
+    outcome.affectedAssets.push(asset.id);
+    return kept;
+  }, []);
+
+  if (cashflowOnly && outcome.passiveDelta !== 0) {
+    target.passiveIncome += outcome.passiveDelta;
+    recalcPlayerIncome(target);
+  }
+  if (!cashflowOnly && outcome.cashGain > 0) {
+    target.cash += outcome.cashGain;
+    if (outcome.passiveDelta !== 0) {
+      target.passiveIncome += outcome.passiveDelta;
+      recalcPlayerIncome(target);
+    }
+  }
+
+  return outcome;
 };
 
 const recalcPlayerIncome = (player: Player) => {
@@ -412,7 +518,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
     const hasCharityBoost = player.charityTurns > 0;
     const baseDice = state.settings.useCashflowDice ? 1 : 2;
-    const charityBonus = state.settings.useCashflowDice && hasCharityBoost ? 1 : 0;
+    const charityBonus = hasCharityBoost ? 1 : 0;
     const dieCount = Math.max(1, baseDice + charityBonus);
     const diceValues = Array.from({ length: dieCount }, () => Math.ceil(Math.random() * 6));
     const total = diceValues.reduce((sum, value) => sum + value, 0);
@@ -477,52 +583,93 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const beforeStatus = captureFastTrackStatus(get().players);
     let recordedAsset: Asset | undefined;
     let appliedCashflow = 0;
+    let offerOutcome: OfferOutcome | undefined;
+    let bankLoan: BankLoanResult | null = null;
     set(
       produce<GameStore>((draft) => {
         const target = draft.players.find((p) => p.id === (playerId ?? draft.currentPlayerId));
         if (!target) return;
 
-        target.cash += cashDelta;
-        const isAsset = !isDoodadCard(card);
-        const normalizedCashflow = deriveCardCashflow(card, cashflowDelta);
-
-        if (isAsset) {
-          appliedCashflow = normalizedCashflow;
-          if (normalizedCashflow !== 0) {
-            target.passiveIncome += normalizedCashflow;
-            recalcPlayerIncome(target);
+        const targetDeck = (card.deckKey ?? "") as DeckKey;
+        if (targetDeck === "offers") {
+          offerOutcome = processOfferCard(card, target);
+        } else {
+          if (cashDelta < 0 && target.cash < Math.abs(cashDelta)) {
+            bankLoan = applyBankLoan(target, Math.abs(cashDelta) - target.cash);
           }
 
-          if (card.name) {
-            const asset: Asset = {
-              id: `${card.id}-${uuid()}`,
-              name: card.name,
-              category: inferAssetCategory(card),
-              cashflow: normalizedCashflow,
-              cost: deriveAssetCost(card, Math.abs(cashDelta)),
-              metadata: {
-                cardId: card.id,
-                deck: card.deckKey
-              }
-            };
-            target.assets.push(asset);
-            recordedAsset = asset;
+          target.cash += cashDelta;
+          const isAsset = !isDoodadCard(card);
+          const normalizedCashflow = deriveCardCashflow(card, cashflowDelta);
+
+          if (isAsset) {
+            appliedCashflow = normalizedCashflow;
+            if (normalizedCashflow !== 0) {
+              target.passiveIncome += normalizedCashflow;
+              recalcPlayerIncome(target);
+            }
+
+            if (card.name) {
+              const asset: Asset = {
+                id: `${card.id}-${uuid()}`,
+                name: card.name,
+                category: inferAssetCategory(card),
+                cashflow: normalizedCashflow,
+                cost: deriveAssetCost(card, Math.abs(cashDelta)),
+                metadata: {
+                  cardId: card.id,
+                  deck: card.deckKey,
+                  landType: getLandType(card),
+                  units: typeof card.units === "number" ? card.units : undefined,
+                  mortgage: typeof card.mortgage === "number" ? card.mortgage : undefined
+                }
+              };
+              target.assets.push(asset);
+              recordedAsset = asset;
+            }
+          } else if (typeof card.loan === "number" && typeof card.payment === "number") {
+            target.liabilities.push({
+              id: `${card.id}-loan-${uuid()}`,
+              name: card.name ?? "Loan",
+              payment: card.payment,
+              balance: card.loan,
+              category: "loan",
+              metadata: { source: card.id }
+            });
+            target.totalExpenses += card.payment;
+            recalcPlayerIncome(target);
           }
         }
       })
     );
     detectFastTrackUnlocks(beforeStatus, get().players, (player) => get().addLog("log.fastTrackUnlocked", undefined, player.id));
-    get().addLog(
-      "log.dealCompleted",
-      {
-        cardId: card.id,
-        cashDelta,
-        cashflowDelta: appliedCashflow || undefined,
-        assetCategory: recordedAsset?.category,
-        assetCost: recordedAsset?.cost
-      },
-      playerId
-    );
+    if (bankLoan) {
+      get().addLog("log.bank.loanIssued", { principal: bankLoan.principal, payment: bankLoan.payment }, playerId);
+    }
+    if (offerOutcome) {
+      get().addLog(
+        "log.offerResolved",
+        {
+          cardId: card.id,
+          cashGained: offerOutcome.cashGain,
+          passiveDelta: offerOutcome.passiveDelta,
+          assetsSold: offerOutcome.affectedAssets.length
+        },
+        playerId
+      );
+    } else {
+      get().addLog(
+        "log.dealCompleted",
+        {
+          cardId: card.id,
+          cashDelta,
+          cashflowDelta: appliedCashflow || undefined,
+          assetCategory: recordedAsset?.category,
+          assetCost: recordedAsset?.cost
+        },
+        playerId
+      );
+    }
     get().clearCard();
   },
   resolvePayday: (playerId, previousPosition = 0, stepsMoved = 0) => {
@@ -538,6 +685,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     let passiveBoost: number | undefined;
     let fastPenalty: number | undefined;
     let dreamAchieved = false;
+    let bankLoans: BankLoanResult[] = [];
 
     set(
       produce<GameStore>((draft) => {
@@ -556,12 +704,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
             target.cash += paydayAward;
           }
         } else {
+          const fastHits = visited.filter((pos) => draft.fastTrackBoard[pos]?.type === "FAST_PAYDAY").length;
+          if (fastHits > 0) {
+            const bonus = target.payday * fastHits;
+            fastTrackBonus = (fastTrackBonus ?? 0) + bonus;
+            target.cash += bonus;
+          }
           paydayHits = 0;
         }
 
         switch (boardEntry.type) {
           case "LIABILITY":
             liabilityPenalty = Math.max(Math.round(target.payday * 0.25), 200);
+            if (target.cash < liabilityPenalty) {
+              const loan = applyBankLoan(target, liabilityPenalty - target.cash);
+              if (loan) bankLoans.push(loan);
+            }
             target.cash -= liabilityPenalty;
             pendingDeck = "doodads";
             break;
@@ -573,22 +731,28 @@ export const useGameStore = create<GameStore>((set, get) => ({
             draft.charityPrompt = { playerId, amount: charityAmount };
             break;
           case "CHILD": {
-            const expensePerChild = Math.max(Math.round(target.totalIncome * 0.056), 100);
-            target.children += 1;
-            target.childExpense += expensePerChild;
-            target.totalExpenses += expensePerChild;
-            recalcPlayerIncome(target);
-            childExpenseIncurred = expensePerChild;
+            const maxChildren = 3;
+            if (target.children < maxChildren) {
+              const expensePerChild = Math.max(Math.round(target.totalIncome * 0.056), 100);
+              target.children += 1;
+              target.childExpense += expensePerChild;
+              target.totalExpenses += expensePerChild;
+              recalcPlayerIncome(target);
+              childExpenseIncurred = expensePerChild;
+            }
             break;
           }
           case "DOWNSIZE":
             downsizePenalty = target.totalExpenses;
+            if (target.cash < downsizePenalty) {
+              const loan = applyBankLoan(target, downsizePenalty - target.cash);
+              if (loan) bankLoans.push(loan);
+            }
             target.cash -= target.totalExpenses;
             target.skipTurns = Math.max(target.skipTurns, 3);
             break;
           case "FAST_PAYDAY":
-            fastTrackBonus = Math.max(target.passiveIncome, target.payday) * 2;
-            target.cash += fastTrackBonus;
+            fastTrackBonus = fastTrackBonus ?? target.payday;
             break;
           case "FAST_OPPORTUNITY":
             passiveBoost = Math.max(2000, Math.round(target.payday * 0.5));
@@ -601,6 +765,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
             break;
           case "FAST_PENALTY":
             fastPenalty = Math.max(target.totalExpenses, 3000);
+            if (target.cash < fastPenalty) {
+              const loan = applyBankLoan(target, fastPenalty - target.cash);
+              if (loan) bankLoans.push(loan);
+            }
             target.cash -= fastPenalty;
             break;
           case "FAST_DREAM":
@@ -664,6 +832,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
         payload.dreamAchieved = true;
       }
       state.addLog(`log.board.${boardEntry.type.toLowerCase()}`, payload, playerId);
+      if (bankLoans.length > 0) {
+        bankLoans.forEach((loan) => state.addLog("log.bank.loanIssued", { principal: loan.principal, payment: loan.payment }, playerId));
+      }
       if (dreamAchieved) {
         state.addLog("log.fastTrack.dreamAchieved", { dream: resolvedPlayer.dream?.id }, playerId);
       }
@@ -821,8 +992,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
       produce<GameStore>((draft) => {
         const player = draft.players.find((p) => p.id === playerId);
         if (!player || !player.fastTrackUnlocked || player.track === "fastTrack") return;
+        const payday = player.payday;
+        player.cash += payday * 100;
+        player.assets = [];
+        player.liabilities = [];
+        player.passiveIncome = payday + 50000;
+        player.totalExpenses = 0;
+        player.totalIncome = player.passiveIncome;
+        player.payday = player.passiveIncome;
+        player.children = 0;
+        player.childExpense = 0;
+        const startSlots = [1, 7, 14, 21, 27, 34, 1, 7];
+        const playerIndex = draft.players.findIndex((p) => p.id === playerId);
+        player.position = startSlots[playerIndex] ?? 0;
         player.track = "fastTrack";
-        player.position = 0;
         const allPlayersFastTrack = draft.players.length > 0 && draft.players.every((p) => p.track === "fastTrack");
         if (allPlayersFastTrack) {
           draft.phase = "fastTrack";

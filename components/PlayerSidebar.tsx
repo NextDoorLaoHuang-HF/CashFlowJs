@@ -10,6 +10,21 @@ export function PlayerSidebar() {
     locale: state.settings.locale
   }));
 
+  const renderBankLoans = (player: (typeof players)[number]) => {
+    const bankLoans = player.liabilities.filter((liability) => liability.metadata?.bank);
+    if (bankLoans.length === 0) return null;
+    const totalBalance = bankLoans.reduce((sum, loan) => sum + (loan.balance || 0), 0);
+    const totalPayment = bankLoans.reduce((sum, loan) => sum + (loan.payment || 0), 0);
+    return (
+      <>
+        <dt style={{ color: "var(--muted)" }}>{t(locale, "players.bankLoanBalance")}</dt>
+        <dd style={{ margin: 0, textAlign: "right" }}>${totalBalance.toLocaleString()}</dd>
+        <dt style={{ color: "var(--muted)" }}>{t(locale, "players.bankLoanPayment")}</dt>
+        <dd style={{ margin: 0, textAlign: "right" }}>${totalPayment.toLocaleString()}</dd>
+      </>
+    );
+  };
+
   return (
     <div className="card scrollable" style={{ maxHeight: "600px" }}>
       <h3 style={{ marginTop: 0 }}>{t(locale, "players.title")}</h3>
@@ -68,6 +83,7 @@ export function PlayerSidebar() {
               <dd style={{ margin: 0, textAlign: "right" }}>
                 {player.dream ? t(locale, `dream.${player.dream.id}.title`) : "—"}
               </dd>
+              {renderBankLoans(player)}
             </dl>
           </div>
         ))}
