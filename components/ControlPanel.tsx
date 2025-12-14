@@ -90,13 +90,22 @@ export function ControlPanel() {
     if (!currentPlayer || currentPlayer.track === "fastTrack") {
       return false;
     }
+    if (selectedCard) {
+      return false;
+    }
     if (deck === "smallDeals") {
       return settings.enableSmallDeals && isOpportunitySquare;
     }
     if (deck === "bigDeals") {
       return settings.enableBigDeals && isOpportunitySquare;
     }
-    return true;
+    if (deck === "doodads") {
+      return currentSquare?.type === "LIABILITY";
+    }
+    if (deck === "offers") {
+      return currentSquare?.type === "OFFER";
+    }
+    return false;
   };
 
   const isExpense = selectedCard ? cardCashflow <= 0 && selectedCard.type?.toLowerCase().includes("doodad") : false;

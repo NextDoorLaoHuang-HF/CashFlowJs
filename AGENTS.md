@@ -1,5 +1,18 @@
 # Repository Guidelines
 
+## 开发对齐（必读）
+- 重构版规则权威（唯一口径）：`docs/game-rules-spec.md`（改规则先改文档）
+- 旧版实现缺陷与规则差异审计：`docs/legacy-logic-audit.md`（避免复刻 bug）
+- 旧版行为基准（仅供对照）：`docs/legacy-rules-baseline.md`
+- 架构图：`docs/architecture.md`（跨组件/跨模块数据流变更必须同步更新）
+
+## 开发计划（Roadmap）
+- P0：所有规则结算集中在 `lib/state/gameStore.ts`；组件只能触发 action/展示状态，禁止在组件里写规则
+- P1：补齐资产/负债报表与交互（卖出资产、还款银行贷款、选择性卖出 Offer）
+- P2：实现 Offer/Stock 的 “Everyone may sell” 全员响应窗口（按回合顺序可复盘）
+- P3：外圈（Fast Track）事件表数据化（如需对齐 `legacy/js/fasttrack.js`，必须先修复旧版 bug 再移植）
+- 规则/架构变更流程：先更新 `docs/game-rules-spec.md` / `docs/architecture.md`，再改代码，最后 `npm run lint` + 手动验收
+
 ## Project Structure & Module Organization
 - `app/`: Next.js App Router entry (`layout.tsx`, `page.tsx`) plus API route `api/llm/route.ts`.
 - `components/`: Client-side UI blocks (board grid, control panels, log, localization toggle, LLM console).

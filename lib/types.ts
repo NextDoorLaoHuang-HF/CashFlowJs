@@ -64,6 +64,7 @@ export type Player = {
   llmModel?: string;
   llmPersona?: string;
   fastTrackUnlocked: boolean;
+  fastTrackTarget?: number;
   track: PlayerTrack;
 };
 

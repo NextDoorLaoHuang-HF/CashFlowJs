@@ -81,7 +81,7 @@ const defaultSettings: GameSettings = {
   enableBigDeals: true,
   enableSmallDeals: true,
   enableLLMPlayers: true,
-  useCashflowDice: false
+  useCashflowDice: true
 };
 
 const deckSources: Record<DeckKey, Record<string, BaseCard>> = {
@@ -218,6 +218,9 @@ const inferAssetCategory = (card: BaseCard): Asset["category"] => {
 type BankLoanResult = { principal: number; payment: number } | null;
 
 const applyBankLoan = (player: Player, amountNeeded: number): BankLoanResult => {
+  if (player.track === "fastTrack") {
+    return null;
+  }
   const principal = roundToNearestThousand(amountNeeded);
   if (principal <= 0) return null;
   const payment = Math.round(principal * 0.1);
@@ -233,6 +236,20 @@ const applyBankLoan = (player: Player, amountNeeded: number): BankLoanResult => 
   player.totalExpenses += payment;
   recalcPlayerIncome(player);
   return { principal, payment };
+};
+
+type FinancingOutcome =
+  | { ok: true; loan?: NonNullable<BankLoanResult> }
+  | { ok: false; shortfall: number };
+
+const ensureFunds = (player: Player, cost: number): FinancingOutcome => {
+  const required = Math.max(0, Math.abs(cost));
+  if (required <= 0) return { ok: true };
+  if (player.cash >= required) return { ok: true };
+  const shortfall = required - player.cash;
+  const loan = applyBankLoan(player, shortfall);
+  if (loan) return { ok: true, loan };
+  return { ok: false, shortfall };
 };
 
 type OfferOutcome = {
@@ -314,12 +331,16 @@ const processOfferCard = (card: BaseCard, target: Player): OfferOutcome => {
 };
 
 const recalcPlayerIncome = (player: Player) => {
-  player.totalIncome = player.scenario.salary + player.passiveIncome;
+  const salary = player.track === "fastTrack" ? 0 : player.scenario.salary;
+  player.totalIncome = salary + player.passiveIncome;
   player.payday = player.totalIncome - player.totalExpenses;
-  if (!player.fastTrackUnlocked && player.totalExpenses > 0 && player.passiveIncome >= player.totalExpenses) {
+  if (player.track === "ratRace" && !player.fastTrackUnlocked && player.totalExpenses > 0 && player.passiveIncome >= player.totalExpenses) {
     player.fastTrackUnlocked = true;
   }
 };
+
+const hasReachedFastTrackGoal = (player: Player): boolean =>
+  player.track === "fastTrack" && typeof player.fastTrackTarget === "number" && player.passiveIncome >= player.fastTrackTarget;
 
 const calculateVisitedSquares = (start: number, steps: number, boardLength: number): number[] => {
   if (steps <= 0) {
@@ -415,34 +436,53 @@ const buildPlayer = (setup: SetupPlayer, settings: GameSettings): Player => {
   };
 };
 
-export const useGameStore = create<GameStore>((set, get) => ({
-  phase: "setup",
-  board: boardSquares,
-  fastTrackBoard: fastTrackSquares,
-  players: [],
-  currentPlayerId: null,
-  decks: {
-    smallDeals: [],
-    bigDeals: [],
-    offers: [],
-    doodads: []
-  },
-  discard: {
-    smallDeals: [],
-    bigDeals: [],
-    offers: [],
-    doodads: []
-  },
-  selectedCard: undefined,
-  dice: undefined,
-  turn: 1,
-  logs: [],
-  ventures: [],
-  loans: [],
-  settings: defaultSettings,
-  history: [],
-  charityPrompt: undefined,
-  initGame: ({ players: playerSetups, settings }) => {
+export const useGameStore = create<GameStore>((set, get) => {
+  const finalizeFastTrackWin = (playerId: string): boolean => {
+    const state = get();
+    if (state.phase === "finished") return false;
+    const player = state.players.find((p) => p.id === playerId);
+    if (!player || !hasReachedFastTrackGoal(player)) return false;
+    set(
+      produce<GameStore>((draft) => {
+        draft.phase = "finished";
+      })
+    );
+    state.addLog(
+      "log.fastTrack.dreamAchieved",
+      { dream: player.dream?.id, target: player.fastTrackTarget, passiveIncome: player.passiveIncome },
+      playerId
+    );
+    return true;
+  };
+
+  return {
+    phase: "setup",
+    board: boardSquares,
+    fastTrackBoard: fastTrackSquares,
+    players: [],
+    currentPlayerId: null,
+    decks: {
+      smallDeals: [],
+      bigDeals: [],
+      offers: [],
+      doodads: []
+    },
+    discard: {
+      smallDeals: [],
+      bigDeals: [],
+      offers: [],
+      doodads: []
+    },
+    selectedCard: undefined,
+    dice: undefined,
+    turn: 1,
+    logs: [],
+    ventures: [],
+    loans: [],
+    settings: defaultSettings,
+    history: [],
+    charityPrompt: undefined,
+    initGame: ({ players: playerSetups, settings }) => {
     const mergedSettings = { ...get().settings, ...settings };
     if (!mergedSettings.enableSmallDeals && !mergedSettings.enableBigDeals) {
       throw new Error("Invalid game settings: at least one deal deck must remain enabled.");
@@ -554,16 +594,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (pendingCharity && pendingCharity.playerId === state.currentPlayerId) {
       return;
     }
+    const currentPlayer = state.players.find((p) => p.id === state.currentPlayerId);
     set(
       produce<GameStore>((draft) => {
-        if (draft.decks[deck].length === 0) {
-          const reshuffled = shuffle(draft.discard[deck]).filter((card) => filterCardBySettings(card, draft.settings, deck));
-          draft.decks[deck] = reshuffled;
-          draft.discard[deck] = [];
-        }
-        const card = draft.decks[deck].shift();
-        if (card) {
+        const maxAttempts = draft.decks[deck].length + draft.discard[deck].length + 2;
+        let attempts = 0;
+        while (attempts < maxAttempts) {
+          if (draft.decks[deck].length === 0) {
+            const reshuffled = shuffle(draft.discard[deck]).filter((card) => filterCardBySettings(card, draft.settings, deck));
+            draft.decks[deck] = reshuffled;
+            draft.discard[deck] = [];
+          }
+          const card = draft.decks[deck].shift();
+          if (!card) {
+            break;
+          }
+          const requiresChild = deck === "doodads" && card.child === true;
+          if (requiresChild && (!currentPlayer || currentPlayer.children <= 0)) {
+            draft.discard[deck].push(card);
+            attempts += 1;
+            continue;
+          }
           draft.selectedCard = { ...card, deckKey: deck };
+          break;
         }
       })
     );
@@ -585,6 +638,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     let appliedCashflow = 0;
     let offerOutcome: OfferOutcome | undefined;
     let bankLoan: BankLoanResult | null = null;
+    let dealBlockedPayload: Record<string, unknown> | null = null;
     set(
       produce<GameStore>((draft) => {
         const target = draft.players.find((p) => p.id === (playerId ?? draft.currentPlayerId));
@@ -594,8 +648,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
         if (targetDeck === "offers") {
           offerOutcome = processOfferCard(card, target);
         } else {
-          if (cashDelta < 0 && target.cash < Math.abs(cashDelta)) {
-            bankLoan = applyBankLoan(target, Math.abs(cashDelta) - target.cash);
+          if (cashDelta < 0) {
+            const cost = Math.abs(cashDelta);
+            const cashAvailable = target.cash;
+            const financing = ensureFunds(target, cost);
+            if (!financing.ok) {
+              dealBlockedPayload = {
+                cardId: card.id,
+                deck: card.deckKey,
+                cost,
+                cashAvailable,
+                shortfall: financing.shortfall,
+                track: target.track
+              };
+              return;
+            }
+            bankLoan = financing.loan ?? null;
           }
 
           target.cash += cashDelta;
@@ -643,6 +711,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       })
     );
     detectFastTrackUnlocks(beforeStatus, get().players, (player) => get().addLog("log.fastTrackUnlocked", undefined, player.id));
+    if (dealBlockedPayload) {
+      get().addLog("log.deal.failed", dealBlockedPayload, playerId);
+      return;
+    }
     if (bankLoan) {
       get().addLog("log.bank.loanIssued", { principal: bankLoan.principal, payment: bankLoan.payment }, playerId);
     }
@@ -684,8 +756,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     let fastTrackBonus: number | undefined;
     let passiveBoost: number | undefined;
     let fastPenalty: number | undefined;
-    let dreamAchieved = false;
+    let visitedFastDream = false;
+    let dreamWin = false;
     let bankLoans: BankLoanResult[] = [];
+    let paymentFailure:
+      | { logKey: string; required: number; cashAvailable: number; shortfall: number; track: Player["track"] }
+      | undefined;
 
     set(
       produce<GameStore>((draft) => {
@@ -715,12 +791,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
         switch (boardEntry.type) {
           case "LIABILITY":
-            liabilityPenalty = Math.max(Math.round(target.payday * 0.25), 200);
-            if (target.cash < liabilityPenalty) {
-              const loan = applyBankLoan(target, liabilityPenalty - target.cash);
-              if (loan) bankLoans.push(loan);
-            }
-            target.cash -= liabilityPenalty;
             pendingDeck = "doodads";
             break;
           case "OFFER":
@@ -733,7 +803,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           case "CHILD": {
             const maxChildren = 3;
             if (target.children < maxChildren) {
-              const expensePerChild = Math.max(Math.round(target.totalIncome * 0.056), 100);
+              const expensePerChild = Math.max(Math.round(target.scenario.salary * 0.056), 100);
               target.children += 1;
               target.childExpense += expensePerChild;
               target.totalExpenses += expensePerChild;
@@ -744,11 +814,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
           }
           case "DOWNSIZE":
             downsizePenalty = target.totalExpenses;
-            if (target.cash < downsizePenalty) {
-              const loan = applyBankLoan(target, downsizePenalty - target.cash);
-              if (loan) bankLoans.push(loan);
+            {
+              const cashAvailable = target.cash;
+              const financing = ensureFunds(target, downsizePenalty);
+              if (!financing.ok) {
+                paymentFailure = {
+                  logKey: "log.board.downsize.failed",
+                  required: downsizePenalty,
+                  cashAvailable,
+                  shortfall: financing.shortfall,
+                  track: target.track
+                };
+              } else {
+                if (financing.loan) bankLoans.push(financing.loan);
+                target.cash -= downsizePenalty;
+              }
             }
-            target.cash -= target.totalExpenses;
             target.skipTurns = Math.max(target.skipTurns, 3);
             break;
           case "FAST_PAYDAY":
@@ -765,15 +846,25 @@ export const useGameStore = create<GameStore>((set, get) => ({
             break;
           case "FAST_PENALTY":
             fastPenalty = Math.max(target.totalExpenses, 3000);
-            if (target.cash < fastPenalty) {
-              const loan = applyBankLoan(target, fastPenalty - target.cash);
-              if (loan) bankLoans.push(loan);
+            {
+              const cashAvailable = target.cash;
+              const financing = ensureFunds(target, fastPenalty);
+              if (!financing.ok) {
+                paymentFailure = {
+                  logKey: "log.board.fast_penalty.failed",
+                  required: fastPenalty,
+                  cashAvailable,
+                  shortfall: financing.shortfall,
+                  track: target.track
+                };
+              } else {
+                if (financing.loan) bankLoans.push(financing.loan);
+                target.cash -= fastPenalty;
+              }
             }
-            target.cash -= fastPenalty;
             break;
           case "FAST_DREAM":
-            dreamAchieved = true;
-            draft.phase = "finished";
+            visitedFastDream = true;
             break;
           case "PAYCHECK":
           default:
@@ -828,15 +919,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
       if (fastPenalty) {
         payload.fastPenalty = fastPenalty;
       }
-      if (dreamAchieved) {
+      if (paymentFailure) {
+        payload.paymentFailed = true;
+        payload.paymentRequired = paymentFailure.required;
+        payload.cashAvailable = paymentFailure.cashAvailable;
+        payload.shortfall = paymentFailure.shortfall;
+        payload.track = paymentFailure.track;
+      }
+      if (visitedFastDream && resolvedPlayer && hasReachedFastTrackGoal(resolvedPlayer)) {
+        dreamWin = true;
         payload.dreamAchieved = true;
       }
-      state.addLog(`log.board.${boardEntry.type.toLowerCase()}`, payload, playerId);
+      state.addLog(paymentFailure?.logKey ?? `log.board.${boardEntry.type.toLowerCase()}`, payload, playerId);
       if (bankLoans.length > 0) {
         bankLoans.forEach((loan) => state.addLog("log.bank.loanIssued", { principal: loan.principal, payment: loan.payment }, playerId));
       }
-      if (dreamAchieved) {
-        state.addLog("log.fastTrack.dreamAchieved", { dream: resolvedPlayer.dream?.id }, playerId);
+      if (dreamWin && resolvedPlayer) {
+        finalizeFastTrackWin(resolvedPlayer.id);
       }
     }
   },
@@ -997,6 +1096,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         player.assets = [];
         player.liabilities = [];
         player.passiveIncome = payday + 50000;
+        player.fastTrackTarget = player.passiveIncome + 50000;
         player.totalExpenses = 0;
         player.totalIncome = player.passiveIncome;
         player.payday = player.passiveIncome;
@@ -1049,4 +1149,5 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ charityPrompt: undefined });
     state.addLog("log.charity.skipped", { amount: prompt.amount }, prompt.playerId);
   }
-}));
+  };
+});

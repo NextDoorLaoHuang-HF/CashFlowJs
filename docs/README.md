@@ -56,8 +56,10 @@ legacy/              Original static assets for reference
 - Gameplay data (cards, board squares, scenarios, dreams) mirrors the original rules.
 - Logs can be exported as JSON for reviewing every move (“复盘”).
 - Joint ventures and loans automatically adjust player cash and passive income when deals close, so the recorded entries always match the in-game balance sheet.
+- Dev alignment docs:
+  - `docs/game-rules-spec.md` (canonical rules spec, Chinese)
+  - `docs/legacy-logic-audit.md` (legacy audit & rule diffs, Chinese)
+  - `docs/legacy-rules-baseline.md` (legacy behavior baseline, Chinese)
 
 This remains a fan-made project inspired by CashFlow 101. The game mechanics are for educational purposes only and the CashFlow trademark belongs to its respective owner.
-
-
 
