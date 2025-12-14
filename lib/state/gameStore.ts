@@ -84,11 +84,24 @@ const defaultSettings: GameSettings = {
   useCashflowDice: true
 };
 
-const deckSources: Record<DeckKey, Record<string, BaseCard>> = {
-  smallDeals: cards.smallDeal as Record<string, BaseCard>,
-  bigDeals: cards.bigDeal as Record<string, BaseCard>,
-  offers: cards.offer as Record<string, BaseCard>,
-  doodads: cards.doodad as Record<string, BaseCard>
+type CardDefinition = {
+  id?: string;
+  type?: string;
+  name?: string;
+  description?: string;
+  text?: string;
+  rule?: string;
+  rule1?: string;
+  rule2?: string;
+  deckKey?: string;
+  [key: string]: unknown;
+};
+
+const deckSources: Record<DeckKey, Record<string, CardDefinition>> = {
+  smallDeals: cards.smallDeal,
+  bigDeals: cards.bigDeal,
+  offers: cards.offer,
+  doodads: cards.doodad
 };
 
 const determineStartingCash = (scenario: Player["scenario"], settings: GameSettings): number => {
@@ -122,7 +135,7 @@ const buildDeckFromSource = (deckKey: DeckKey, settings: GameSettings): BaseCard
   if (deckKey === "bigDeals" && !settings.enableBigDeals) {
     return [];
   }
-  const baseDeck = cloneDeck(deckSources[deckKey]);
+  const baseDeck = cloneDeck(deckSources[deckKey], deckKey);
   return shuffle(baseDeck.filter((card) => filterCardBySettings(card, settings, deckKey)));
 };
 
@@ -144,11 +157,27 @@ const detectFastTrackUnlocks = (
   });
 };
 
-const cloneDeck = (deck: Record<string, BaseCard>): BaseCard[] =>
-  Object.keys(deck).map((key) => ({
-    ...deck[key],
-    id: deck[key].id ?? key
-  }));
+const cloneDeck = (deck: Record<string, CardDefinition>, deckKey: DeckKey): BaseCard[] =>
+  Object.keys(deck).map((key) => {
+    const card = deck[key];
+    const fallbackDescription = typeof card.decription === "string" ? card.decription : "";
+    const description =
+      typeof card.description === "string"
+        ? card.description
+        : typeof card.text === "string"
+          ? card.text
+          : fallbackDescription;
+    const name = typeof card.name === "string" ? card.name : key;
+    const type = typeof card.type === "string" ? card.type : deckKey === "doodads" ? "Doodad" : "Card";
+    return {
+      ...card,
+      id: card.id ?? key,
+      deckKey,
+      type,
+      name,
+      description
+    };
+  });
 
 const roundToNearestThousand = (value: number): number => Math.ceil(value / 1000) * 1000;
 
@@ -637,7 +666,7 @@ export const useGameStore = create<GameStore>((set, get) => {
     let recordedAsset: Asset | undefined;
     let appliedCashflow = 0;
     let offerOutcome: OfferOutcome | undefined;
-    let bankLoan: BankLoanResult | null = null;
+    let bankLoan: NonNullable<BankLoanResult> | undefined;
     let dealBlockedPayload: Record<string, unknown> | null = null;
     set(
       produce<GameStore>((draft) => {
@@ -663,7 +692,7 @@ export const useGameStore = create<GameStore>((set, get) => {
               };
               return;
             }
-            bankLoan = financing.loan ?? null;
+            bankLoan = financing.loan;
           }
 
           target.cash += cashDelta;
@@ -758,7 +787,7 @@ export const useGameStore = create<GameStore>((set, get) => {
     let fastPenalty: number | undefined;
     let visitedFastDream = false;
     let dreamWin = false;
-    let bankLoans: BankLoanResult[] = [];
+    let bankLoans: NonNullable<BankLoanResult>[] = [];
     let paymentFailure:
       | { logKey: string; required: number; cashAvailable: number; shortfall: number; track: Player["track"] }
       | undefined;
