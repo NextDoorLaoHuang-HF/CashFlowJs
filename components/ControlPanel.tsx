@@ -3,7 +3,6 @@
 import { useMemo } from "react";
 import { t } from "../lib/i18n";
 import { translateCardText } from "../lib/cardTranslations";
-import type { BaseCard } from "../lib/types";
 import { type DeckKey, useGameStore } from "../lib/state/gameStore";
 
 const deckLabels: Record<DeckKey, string> = {
@@ -15,39 +14,19 @@ const deckLabels: Record<DeckKey, string> = {
 
 const deckOrder: DeckKey[] = ["smallDeals", "bigDeals", "doodads", "offers"];
 
-const extractCardCost = (card: BaseCard) => {
-  const fields = ["downPayment", "cost", "price", "amount", "deposit"];
-  for (const field of fields) {
-    const value = typeof card[field] === "number" ? (card[field] as number) : undefined;
-    if (value !== undefined) {
-      return value;
-    }
-  }
-  return 0;
-};
-
-const extractCardCashflow = (card: BaseCard) => {
-  const fields = ["cashFlow", "dividend", "payout", "savings"];
-  for (const field of fields) {
-    const value = typeof card[field] === "number" ? (card[field] as number) : undefined;
-    if (value !== undefined) {
-      return value;
-    }
-  }
-  return 0;
-};
-
 export function ControlPanel() {
   const {
     rollDice,
     drawCard,
-    completeDeal,
-    clearCard,
+    applySelectedCard,
+    passSelectedCard,
+    getCardPreview,
     selectedCard,
     dice,
     settings,
     nextPlayer,
     currentPlayerId,
+    turnState,
     charityPrompt,
     donateCharity,
     skipCharity,
@@ -58,13 +37,15 @@ export function ControlPanel() {
   } = useGameStore((state) => ({
     rollDice: state.rollDice,
     drawCard: state.drawCard,
-    completeDeal: state.completeDeal,
-    clearCard: state.clearCard,
+    applySelectedCard: state.applySelectedCard,
+    passSelectedCard: state.passSelectedCard,
+    getCardPreview: state.getCardPreview,
     selectedCard: state.selectedCard,
     dice: state.dice,
     settings: state.settings,
     nextPlayer: state.nextPlayer,
     currentPlayerId: state.currentPlayerId,
+    turnState: state.turnState,
     charityPrompt: state.charityPrompt,
     donateCharity: state.donateCharity,
     skipCharity: state.skipCharity,
@@ -74,19 +55,28 @@ export function ControlPanel() {
     enterFastTrack: state.enterFastTrack
   }));
 
-  const cardCost = useMemo(() => (selectedCard ? extractCardCost(selectedCard) : 0), [selectedCard]);
-  const cardCashflow = useMemo(() => (selectedCard ? extractCardCashflow(selectedCard) : 0), [selectedCard]);
   const currentPlayer = useMemo(() => players.find((player) => player.id === currentPlayerId), [players, currentPlayerId]);
   const currentSquare = useMemo(() => {
     if (!currentPlayer) return undefined;
     const trackSquares = currentPlayer.track === "fastTrack" ? fastTrackBoard : board;
     return trackSquares[currentPlayer.position];
   }, [board, fastTrackBoard, currentPlayer]);
+  const cardPreview = useMemo(
+    () => (selectedCard ? getCardPreview(selectedCard, currentPlayerId ?? undefined) : null),
+    [selectedCard, getCardPreview, currentPlayerId]
+  );
+  const cardCost = cardPreview?.cost ?? 0;
+  const cardCashflow = cardPreview?.cashflow ?? 0;
   const isOpportunitySquare = currentPlayer?.track === "ratRace" && currentSquare?.type === "OPPORTUNITY";
   const dealsDisabled = !settings.enableSmallDeals && !settings.enableBigDeals;
   const charityPending = charityPrompt && charityPrompt.playerId === currentPlayerId;
+  const canRoll = turnState === "awaitRoll" && !charityPending && !selectedCard;
+  const canEndTurn = (turnState === "awaitEnd" || turnState === "awaitCharity") && !selectedCard;
 
   const canDrawDeck = (deck: DeckKey) => {
+    if (turnState !== "awaitAction") {
+      return false;
+    }
     if (!currentPlayer || currentPlayer.track === "fastTrack") {
       return false;
     }
@@ -99,29 +89,33 @@ export function ControlPanel() {
     if (deck === "bigDeals") {
       return settings.enableBigDeals && isOpportunitySquare;
     }
-    if (deck === "doodads") {
-      return currentSquare?.type === "LIABILITY";
-    }
-    if (deck === "offers") {
-      return currentSquare?.type === "OFFER";
-    }
+    // Liability/Offer 会在落点事件中自动抽取，无需手动点击抽牌。
     return false;
   };
 
-  const isExpense = selectedCard ? cardCashflow <= 0 && selectedCard.type?.toLowerCase().includes("doodad") : false;
+  const primaryActionKey = useMemo(() => {
+    if (!cardPreview) return "controls.buy";
+    if (cardPreview.primaryAction === "pay") return "controls.pay";
+    if (cardPreview.primaryAction === "resolve") return "controls.resolve";
+    return "controls.buy";
+  }, [cardPreview]);
+  const isExpense = cardPreview?.primaryAction === "pay";
+  const canPass = Boolean(cardPreview?.canPass) && turnState === "awaitCard";
+  const canApply = turnState === "awaitCard";
 
   return (
     <div className="card grid" style={{ gap: "0.8rem" }}>
       <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
         <button
           onClick={rollDice}
-          disabled={charityPending}
+          disabled={!canRoll}
           style={{ flex: "1 1 150px", padding: "0.75rem", borderRadius: 12, background: "rgba(68, 208, 123, 0.2)", color: "#fff" }}
         >
           {t(settings.locale, "controls.roll")}
         </button>
         <button
           onClick={nextPlayer}
+          disabled={!canEndTurn}
           style={{ flex: "1 1 150px", padding: "0.75rem", borderRadius: 12, background: "rgba(250, 204, 21, 0.15)", color: "#fff" }}
         >
           {t(settings.locale, "controls.endTurn")}
@@ -129,6 +123,7 @@ export function ControlPanel() {
         {currentPlayer && currentPlayer.fastTrackUnlocked && currentPlayer.track === "ratRace" && (
           <button
             onClick={() => enterFastTrack(currentPlayer.id)}
+            disabled={!canEndTurn}
             style={{ flex: "1 1 150px", padding: "0.75rem", borderRadius: 12, background: "rgba(251, 191, 36, 0.2)", color: "#fff" }}
           >
             {t(settings.locale, "controls.fastTrack")}
@@ -234,7 +229,11 @@ export function ControlPanel() {
         <div style={{ borderRadius: 12, border: "1px dashed rgba(255,255,255,0.2)", padding: "0.75rem" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <strong>{translateCardText(settings.locale, selectedCard.name)}</strong>
-            <button onClick={clearCard} style={{ background: "transparent", color: "var(--muted)" }}>
+            <button
+              onClick={passSelectedCard}
+              disabled={!canPass}
+              style={{ background: "transparent", color: "var(--muted)", opacity: canPass ? 1 : 0.5, cursor: canPass ? "pointer" : "not-allowed" }}
+            >
               ✕
             </button>
           </div>
@@ -271,25 +270,31 @@ export function ControlPanel() {
           </dl>
           <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
             <button
-              onClick={() => completeDeal({ card: selectedCard, cashDelta: -cardCost, cashflowDelta: cardCashflow })}
+              onClick={applySelectedCard}
+              disabled={!canApply}
               style={{
                 padding: "0.5rem 1rem",
                 borderRadius: 10,
                 flex: 1,
                 background: isExpense ? "rgba(248,113,113,0.2)" : "rgba(34,197,94,0.25)",
-                color: "#fff"
+                color: "#fff",
+                opacity: canApply ? 1 : 0.5,
+                cursor: canApply ? "pointer" : "not-allowed"
               }}
             >
-              {t(settings.locale, isExpense ? "controls.pay" : "controls.buy") ?? "Apply"}
+              {t(settings.locale, primaryActionKey) ?? "Apply"}
             </button>
             <button
-              onClick={clearCard}
+              onClick={passSelectedCard}
+              disabled={!canPass}
               style={{
                 padding: "0.5rem 1rem",
                 borderRadius: 10,
                 flex: 1,
                 background: "rgba(255,255,255,0.08)",
-                color: "#fff"
+                color: "#fff",
+                opacity: canPass ? 1 : 0.5,
+                cursor: canPass ? "pointer" : "not-allowed"
               }}
             >
               {t(settings.locale, "controls.pass")}

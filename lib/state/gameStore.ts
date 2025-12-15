@@ -17,7 +17,8 @@ import type {
   LLMAction,
   Locale,
   Player,
-  PlayerLoan
+  PlayerLoan,
+  TurnState
 } from "../types";
 
 export type DeckKey = "smallDeals" | "bigDeals" | "offers" | "doodads";
@@ -37,12 +38,20 @@ type SetupPayload = {
   settings?: Partial<GameSettings>;
 };
 
+type CardPreview = {
+  cost: number;
+  cashflow: number;
+  canPass: boolean;
+  primaryAction: "buy" | "pay" | "resolve";
+};
+
 type GameStore = {
   phase: GamePhase;
   board: typeof boardSquares;
   fastTrackBoard: typeof fastTrackSquares;
   players: Player[];
   currentPlayerId: string | null;
+  turnState: TurnState;
   decks: Record<DeckKey, BaseCard[]>;
   discard: Record<DeckKey, BaseCard[]>;
   selectedCard?: BaseCard;
@@ -56,6 +65,10 @@ type GameStore = {
   charityPrompt?: CharityPrompt;
   initGame: (payload: SetupPayload) => void;
   addLog: (message: string, payload?: Record<string, unknown>, playerId?: string) => void;
+  beginTurn: () => void;
+  getCardPreview: (card: BaseCard, playerId?: string) => CardPreview;
+  applySelectedCard: () => void;
+  passSelectedCard: () => void;
   rollDice: () => void;
   drawCard: (deck: DeckKey) => void;
   clearCard: () => void;
@@ -67,6 +80,7 @@ type GameStore = {
   updateJointVenture: (id: string, updates: Partial<JointVenture>) => void;
   addLoan: (loan: Omit<PlayerLoan, "id" | "status" | "remaining">) => void;
   repayLoan: (loanId: string, amount: number) => void;
+  repayBankLoan: (liabilityId: string, amount: number) => void;
   clearLog: () => void;
   recordLLMAction: (playerId: string, action: LLMAction) => void;
   donateCharity: () => void;
@@ -190,6 +204,50 @@ const shuffle = <T,>(list: T[]): T[] => {
   return copy;
 };
 
+const discardSelectedCard = (draft: {
+  selectedCard?: BaseCard;
+  discard: Record<DeckKey, BaseCard[]>;
+}) => {
+  if (!draft.selectedCard) return;
+  const deckKey = (draft.selectedCard.deckKey ?? "smallDeals") as DeckKey;
+  draft.discard[deckKey].push(draft.selectedCard);
+  draft.selectedCard = undefined;
+};
+
+const drawCardForPlayer = (
+  draft: {
+    decks: Record<DeckKey, BaseCard[]>;
+    discard: Record<DeckKey, BaseCard[]>;
+    settings: GameSettings;
+    selectedCard?: BaseCard;
+  },
+  deck: DeckKey,
+  currentPlayer?: Player
+): boolean => {
+  const maxAttempts = draft.decks[deck].length + draft.discard[deck].length + 2;
+  let attempts = 0;
+  while (attempts < maxAttempts) {
+    if (draft.decks[deck].length === 0) {
+      const reshuffled = shuffle(draft.discard[deck]).filter((card) => filterCardBySettings(card, draft.settings, deck));
+      draft.decks[deck] = reshuffled;
+      draft.discard[deck] = [];
+    }
+    const card = draft.decks[deck].shift();
+    if (!card) {
+      break;
+    }
+    const requiresChild = deck === "doodads" && card.child === true;
+    if (requiresChild && (!currentPlayer || currentPlayer.children <= 0)) {
+      draft.discard[deck].push(card);
+      attempts += 1;
+      continue;
+    }
+    draft.selectedCard = { ...card, deckKey: deck };
+    return true;
+  }
+  return false;
+};
+
 const getNumericField = (card: BaseCard, fields: string[]): number | undefined => {
   for (const field of fields) {
     const value = card[field];
@@ -218,6 +276,50 @@ const deriveCardCashflow = (card: BaseCard, provided?: number): number => {
   const value = getNumericField(card, ["cashFlow", "cashflow", "dividend", "payout", "savings"]);
   return typeof value === "number" ? value : 0;
 };
+
+const getDeckKey = (card: BaseCard): DeckKey | null => {
+  const deckKey = card.deckKey;
+  if (deckKey === "smallDeals" || deckKey === "bigDeals" || deckKey === "offers" || deckKey === "doodads") {
+    return deckKey;
+  }
+  return null;
+};
+
+const deriveCardCostForPlayer = (card: BaseCard, player?: Player): number => {
+  const deckKey = getDeckKey(card);
+  if (deckKey === "offers") {
+    return 0;
+  }
+  if (deckKey === "doodads") {
+    const ratio = typeof card.amount === "number" ? card.amount : undefined;
+    if (typeof ratio === "number" && ratio > 0 && ratio < 1) {
+      const basis = player?.cash ?? 0;
+      return Math.max(0, Math.round(basis * ratio));
+    }
+  }
+  const value = getNumericField(card, ["downPayment", "cost", "price", "deposit"]);
+  return typeof value === "number" ? Math.max(0, Math.abs(value)) : 0;
+};
+
+const derivePrimaryAction = (card: BaseCard): CardPreview["primaryAction"] => {
+  const deckKey = getDeckKey(card);
+  if (deckKey === "doodads") return "pay";
+  if (deckKey === "offers") return "resolve";
+  return "buy";
+};
+
+const canPassCard = (card: BaseCard): boolean => {
+  const deckKey = getDeckKey(card);
+  if (deckKey === "doodads") return false;
+  return true;
+};
+
+const buildCardPreview = (card: BaseCard, player?: Player): CardPreview => ({
+  cost: deriveCardCostForPlayer(card, player),
+  cashflow: deriveCardCashflow(card),
+  canPass: canPassCard(card),
+  primaryAction: derivePrimaryAction(card)
+});
 
 const isDoodadCard = (card: BaseCard): boolean => {
   const deckKey = typeof card.deckKey === "string" ? card.deckKey.toLowerCase() : "";
@@ -484,12 +586,75 @@ export const useGameStore = create<GameStore>((set, get) => {
     return true;
   };
 
+  const advanceToNextPlayer = () => {
+    set(
+      produce<GameStore>((draft) => {
+        if (!draft.currentPlayerId || draft.players.length === 0) return;
+
+        const currentIndex = draft.players.findIndex((player) => player.id === draft.currentPlayerId);
+        const safeCurrentIndex = currentIndex >= 0 ? currentIndex : 0;
+        const nextIndex = (safeCurrentIndex + 1) % draft.players.length;
+
+        discardSelectedCard(draft);
+        draft.charityPrompt = undefined;
+        draft.dice = undefined;
+
+        draft.currentPlayerId = draft.players[nextIndex].id;
+        if (safeCurrentIndex === draft.players.length - 1) {
+          draft.turn += 1;
+        }
+        draft.turnState = "awaitRoll";
+        draft.history.push({ turn: draft.turn, players: draft.players.map((player) => ({ ...player })) });
+      })
+    );
+  };
+
+  const beginTurn = () => {
+    const maxIterations = Math.max(1, get().players.length) * 10;
+    let iterations = 0;
+
+    while (iterations < maxIterations) {
+      const state = get();
+      if (state.phase === "setup" || state.phase === "finished") return;
+      if (!state.currentPlayerId || state.players.length === 0) return;
+
+      const currentPlayer = state.players.find((player) => player.id === state.currentPlayerId);
+      if (!currentPlayer) return;
+
+      set(
+        produce<GameStore>((draft) => {
+          draft.dice = undefined;
+          discardSelectedCard(draft);
+          draft.charityPrompt = undefined;
+          draft.turnState = "awaitRoll";
+        })
+      );
+
+      if (currentPlayer.skipTurns <= 0) {
+        return;
+      }
+
+      set(
+        produce<GameStore>((draft) => {
+          const player = draft.players.find((p) => p.id === state.currentPlayerId);
+          if (player && player.skipTurns > 0) {
+            player.skipTurns -= 1;
+          }
+        })
+      );
+      get().addLog("log.playerSkipsTurn", { reason: "Downsized" }, state.currentPlayerId);
+      advanceToNextPlayer();
+      iterations += 1;
+    }
+  };
+
   return {
     phase: "setup",
     board: boardSquares,
     fastTrackBoard: fastTrackSquares,
     players: [],
     currentPlayerId: null,
+    turnState: "awaitRoll",
     decks: {
       smallDeals: [],
       bigDeals: [],
@@ -511,6 +676,7 @@ export const useGameStore = create<GameStore>((set, get) => {
     settings: defaultSettings,
     history: [],
     charityPrompt: undefined,
+    beginTurn,
     initGame: ({ players: playerSetups, settings }) => {
     const mergedSettings = { ...get().settings, ...settings };
     if (!mergedSettings.enableSmallDeals && !mergedSettings.enableBigDeals) {
@@ -527,6 +693,7 @@ export const useGameStore = create<GameStore>((set, get) => {
         state.selectedCard = undefined;
         state.dice = undefined;
         state.charityPrompt = undefined;
+        state.turnState = "awaitRoll";
         state.decks.smallDeals = buildDeckFromSource("smallDeals", mergedSettings);
         state.decks.bigDeals = buildDeckFromSource("bigDeals", mergedSettings);
         state.decks.offers = buildDeckFromSource("offers", mergedSettings);
@@ -537,6 +704,7 @@ export const useGameStore = create<GameStore>((set, get) => {
       })
     );
     get().addLog("log.gameInitialized");
+    get().beginTurn();
   },
   addLog: (message, payload, playerId) => {
     const { settings, phase, turn, logs } = get();
@@ -552,9 +720,43 @@ export const useGameStore = create<GameStore>((set, get) => {
     };
     set({ logs: [...logs, entry] });
   },
+  getCardPreview: (card, playerId) => {
+    const state = get();
+    const resolvedPlayerId = playerId ?? state.currentPlayerId;
+    const player = resolvedPlayerId ? state.players.find((p) => p.id === resolvedPlayerId) : undefined;
+    return buildCardPreview(card, player);
+  },
+  applySelectedCard: () => {
+    const state = get();
+    if (state.turnState !== "awaitCard") return;
+    if (!state.selectedCard) return;
+    const currentPlayerId = state.currentPlayerId;
+    if (!currentPlayerId) return;
+    const preview = state.getCardPreview(state.selectedCard, currentPlayerId);
+    const cashDelta = -preview.cost;
+    state.completeDeal({ card: state.selectedCard, playerId: currentPlayerId, cashDelta, cashflowDelta: preview.cashflow });
+  },
+  passSelectedCard: () => {
+    const state = get();
+    if (state.turnState !== "awaitCard") return;
+    if (!state.selectedCard) return;
+    const currentPlayerId = state.currentPlayerId;
+    const preview = state.getCardPreview(state.selectedCard, currentPlayerId ?? undefined);
+    if (!preview.canPass) {
+      state.addLog("log.card.passDenied", { cardId: state.selectedCard.id, deck: state.selectedCard.deckKey }, currentPlayerId ?? undefined);
+      return;
+    }
+    state.clearCard();
+  },
   rollDice: () => {
     const state = get();
     if (!state.currentPlayerId) {
+      return;
+    }
+    if (state.turnState !== "awaitRoll") {
+      return;
+    }
+    if (state.selectedCard) {
       return;
     }
     const player = state.players.find((p) => p.id === state.currentPlayerId);
@@ -563,20 +765,6 @@ export const useGameStore = create<GameStore>((set, get) => {
     }
     const pendingCharity = state.charityPrompt;
     if (pendingCharity && pendingCharity.playerId === player.id) {
-      return;
-    }
-
-    if (player.skipTurns > 0) {
-      set(
-        produce<GameStore>((draft) => {
-          const current = draft.players.find((p) => p.id === player.id);
-          if (current) {
-            current.skipTurns -= 1;
-          }
-        })
-      );
-      get().addLog("log.playerSkipsTurn", { reason: "Downsized" }, player.id);
-      get().nextPlayer();
       return;
     }
 
@@ -596,6 +784,7 @@ export const useGameStore = create<GameStore>((set, get) => {
     set(
       produce<GameStore>((draft) => {
         draft.dice = dice;
+        draft.turnState = "awaitEnd";
         const current = draft.players.find((p) => p.id === player.id);
         if (!current) return;
         if (hasCharityBoost && current.charityTurns > 0) {
@@ -616,6 +805,9 @@ export const useGameStore = create<GameStore>((set, get) => {
   },
   drawCard: (deck) => {
     const state = get();
+    if (state.turnState !== "awaitAction") {
+      return;
+    }
     if ((deck === "smallDeals" && !state.settings.enableSmallDeals) || (deck === "bigDeals" && !state.settings.enableBigDeals)) {
       return;
     }
@@ -624,44 +816,67 @@ export const useGameStore = create<GameStore>((set, get) => {
       return;
     }
     const currentPlayer = state.players.find((p) => p.id === state.currentPlayerId);
+    if (!currentPlayer || currentPlayer.track !== "ratRace") {
+      return;
+    }
+    const square = state.board[currentPlayer.position];
+    if (!square || square.type !== "OPPORTUNITY") {
+      return;
+    }
+    if (deck !== "smallDeals" && deck !== "bigDeals") {
+      return;
+    }
+    if (state.selectedCard) {
+      return;
+    }
     set(
       produce<GameStore>((draft) => {
-        const maxAttempts = draft.decks[deck].length + draft.discard[deck].length + 2;
-        let attempts = 0;
-        while (attempts < maxAttempts) {
-          if (draft.decks[deck].length === 0) {
-            const reshuffled = shuffle(draft.discard[deck]).filter((card) => filterCardBySettings(card, draft.settings, deck));
-            draft.decks[deck] = reshuffled;
-            draft.discard[deck] = [];
-          }
-          const card = draft.decks[deck].shift();
-          if (!card) {
-            break;
-          }
-          const requiresChild = deck === "doodads" && card.child === true;
-          if (requiresChild && (!currentPlayer || currentPlayer.children <= 0)) {
-            draft.discard[deck].push(card);
-            attempts += 1;
-            continue;
-          }
-          draft.selectedCard = { ...card, deckKey: deck };
-          break;
+        if (draft.selectedCard) return;
+        const player = draft.players.find((p) => p.id === draft.currentPlayerId);
+        if (!player || player.track !== "ratRace") return;
+        const currentSquare = draft.board[player.position];
+        if (!currentSquare || currentSquare.type !== "OPPORTUNITY") return;
+        const drawn = drawCardForPlayer(draft, deck, player);
+        if (drawn) {
+          draft.turnState = "awaitCard";
         }
       })
     );
   },
   clearCard: () => {
+    const state = get();
+    const currentPlayerId = state.currentPlayerId ?? undefined;
+    let passDeniedPayload: Record<string, unknown> | null = null;
     set(
       produce<GameStore>((draft) => {
-        if (draft.selectedCard) {
-          const deckKey = (draft.selectedCard.deckKey ?? "smallDeals") as DeckKey;
-          draft.discard[deckKey].push(draft.selectedCard);
-          draft.selectedCard = undefined;
+        if (draft.turnState === "awaitCard" && draft.selectedCard) {
+          const preview = buildCardPreview(
+            draft.selectedCard,
+            currentPlayerId ? draft.players.find((player) => player.id === currentPlayerId) : undefined
+          );
+          if (!preview.canPass) {
+            passDeniedPayload = { cardId: draft.selectedCard.id, deck: draft.selectedCard.deckKey };
+            return;
+          }
+        }
+        discardSelectedCard(draft);
+        if (draft.turnState === "awaitCard") {
+          draft.turnState = "awaitEnd";
         }
       })
     );
+    if (passDeniedPayload) {
+      state.addLog("log.card.passDenied", passDeniedPayload, currentPlayerId);
+    }
   },
   completeDeal: ({ card, playerId, cashDelta, cashflowDelta }) => {
+    const state = get();
+    const targetPlayerId = playerId ?? state.currentPlayerId;
+    if (!targetPlayerId) return;
+    if (state.turnState !== "awaitCard") return;
+    if (!state.selectedCard) return;
+    if (state.selectedCard.id !== card.id || state.selectedCard.deckKey !== card.deckKey) return;
+
     const beforeStatus = captureFastTrackStatus(get().players);
     let recordedAsset: Asset | undefined;
     let appliedCashflow = 0;
@@ -670,7 +885,7 @@ export const useGameStore = create<GameStore>((set, get) => {
     let dealBlockedPayload: Record<string, unknown> | null = null;
     set(
       produce<GameStore>((draft) => {
-        const target = draft.players.find((p) => p.id === (playerId ?? draft.currentPlayerId));
+        const target = draft.players.find((p) => p.id === targetPlayerId);
         if (!target) return;
 
         const targetDeck = (card.deckKey ?? "") as DeckKey;
@@ -737,6 +952,8 @@ export const useGameStore = create<GameStore>((set, get) => {
             recalcPlayerIncome(target);
           }
         }
+
+        draft.turnState = "awaitEnd";
       })
     );
     detectFastTrackUnlocks(beforeStatus, get().players, (player) => get().addLog("log.fastTrackUnlocked", undefined, player.id));
@@ -775,7 +992,6 @@ export const useGameStore = create<GameStore>((set, get) => {
   },
   resolvePayday: (playerId, previousPosition = 0, stepsMoved = 0) => {
     const beforeStatus = captureFastTrackStatus(get().players);
-    let pendingDeck: DeckKey | null = null;
     let paydayHits = 0;
     let paydayAward = 0;
     let childExpenseIncurred: number | undefined;
@@ -820,14 +1036,23 @@ export const useGameStore = create<GameStore>((set, get) => {
 
         switch (boardEntry.type) {
           case "LIABILITY":
-            pendingDeck = "doodads";
+            discardSelectedCard(draft);
+            {
+              const drawn = drawCardForPlayer(draft, "doodads", target);
+              draft.turnState = drawn ? "awaitCard" : "awaitEnd";
+            }
             break;
           case "OFFER":
-            pendingDeck = "offers";
+            discardSelectedCard(draft);
+            {
+              const drawn = drawCardForPlayer(draft, "offers", target);
+              draft.turnState = drawn ? "awaitCard" : "awaitEnd";
+            }
             break;
           case "CHARITY":
             charityAmount = Math.max(Math.round(target.totalIncome * 0.1), 100);
             draft.charityPrompt = { playerId, amount: charityAmount };
+            draft.turnState = "awaitCharity";
             break;
           case "CHILD": {
             const maxChildren = 3;
@@ -839,6 +1064,7 @@ export const useGameStore = create<GameStore>((set, get) => {
               recalcPlayerIncome(target);
               childExpenseIncurred = expensePerChild;
             }
+            draft.turnState = "awaitEnd";
             break;
           }
           case "DOWNSIZE":
@@ -860,18 +1086,25 @@ export const useGameStore = create<GameStore>((set, get) => {
               }
             }
             target.skipTurns = Math.max(target.skipTurns, 3);
+            draft.turnState = "awaitEnd";
+            break;
+          case "OPPORTUNITY":
+            draft.turnState = target.track === "ratRace" ? "awaitAction" : "awaitEnd";
             break;
           case "FAST_PAYDAY":
             fastTrackBonus = fastTrackBonus ?? target.payday;
+            draft.turnState = "awaitEnd";
             break;
           case "FAST_OPPORTUNITY":
             passiveBoost = Math.max(2000, Math.round(target.payday * 0.5));
             target.passiveIncome += passiveBoost;
             recalcPlayerIncome(target);
+            draft.turnState = "awaitEnd";
             break;
           case "FAST_DONATION":
             charityAmount = Math.max(Math.round(target.totalIncome * 0.2), 5000);
             draft.charityPrompt = { playerId, amount: charityAmount };
+            draft.turnState = "awaitCharity";
             break;
           case "FAST_PENALTY":
             fastPenalty = Math.max(target.totalExpenses, 3000);
@@ -891,21 +1124,20 @@ export const useGameStore = create<GameStore>((set, get) => {
                 target.cash -= fastPenalty;
               }
             }
+            draft.turnState = "awaitEnd";
             break;
           case "FAST_DREAM":
             visitedFastDream = true;
+            draft.turnState = "awaitEnd";
             break;
           case "PAYCHECK":
           default:
+            draft.turnState = "awaitEnd";
             break;
         }
       })
     );
     detectFastTrackUnlocks(beforeStatus, get().players, (player) => get().addLog("log.fastTrackUnlocked", undefined, player.id));
-
-    if (pendingDeck) {
-      get().drawCard(pendingDeck);
-    }
 
     const state = get();
     const resolvedPlayer = state.players.find((p) => p.id === playerId);
@@ -923,9 +1155,6 @@ export const useGameStore = create<GameStore>((set, get) => {
       if (paydayHits > 0) {
         payload.paychecks = paydayHits;
         payload.paydayAward = paydayAward;
-      }
-      if (pendingDeck) {
-        payload.deck = pendingDeck;
       }
       if (childExpenseIncurred) {
         payload.childExpense = childExpenseIncurred;
@@ -970,19 +1199,16 @@ export const useGameStore = create<GameStore>((set, get) => {
   },
   nextPlayer: () => {
     const state = get();
+    if (state.phase === "setup" || state.phase === "finished") return;
+    if (!state.currentPlayerId || state.players.length === 0) return;
+    if (state.turnState === "awaitRoll" || state.turnState === "awaitAction" || state.turnState === "awaitCard") {
+      return;
+    }
     if (state.charityPrompt && state.charityPrompt.playerId === state.currentPlayerId) {
       state.skipCharity();
     }
-    if (state.players.length === 0) return;
-    const currentIndex = state.players.findIndex((p) => p.id === state.currentPlayerId);
-    const nextIndex = (currentIndex + 1) % state.players.length;
-    set(
-      produce<GameStore>((draft) => {
-        draft.currentPlayerId = draft.players[nextIndex].id;
-        draft.turn += currentIndex === state.players.length - 1 ? 1 : 0;
-        draft.history.push({ turn: draft.turn, players: draft.players.map((p) => ({ ...p })) });
-      })
-    );
+    advanceToNextPlayer();
+    state.beginTurn();
   },
   setLocale: (locale) => {
     set(
@@ -1108,6 +1334,62 @@ export const useGameStore = create<GameStore>((set, get) => {
       get().addLog("log.loans.repaid", { loanId, amount: repaymentAmount, remaining: remainingBalance });
     }
   },
+  repayBankLoan: (liabilityId, amount) => {
+    const state = get();
+    if (state.phase === "setup" || state.phase === "finished") return;
+    if (state.turnState !== "awaitEnd") return;
+    if (!state.currentPlayerId) return;
+
+    let repaid = 0;
+    let remaining = 0;
+    let previousPayment = 0;
+    let updatedPayment = 0;
+
+    set(
+      produce<GameStore>((draft) => {
+        const player = draft.players.find((p) => p.id === draft.currentPlayerId);
+        if (!player || player.track !== "ratRace") return;
+
+        const loanIndex = player.liabilities.findIndex((liability) => liability.id === liabilityId && liability.metadata?.bank);
+        if (loanIndex < 0) return;
+
+        const loan = player.liabilities[loanIndex];
+        if (!Number.isFinite(amount)) return;
+        const wantsPayoff = amount >= loan.balance;
+        const requested = wantsPayoff ? loan.balance : Math.floor(amount / 1000) * 1000;
+        if (requested <= 0) return;
+        const paymentAmount = Math.min(requested, loan.balance);
+        if (paymentAmount <= 0) return;
+        if (player.cash < paymentAmount) return;
+
+        player.cash -= paymentAmount;
+        loan.balance -= paymentAmount;
+        repaid = paymentAmount;
+        remaining = Math.max(0, loan.balance);
+
+        previousPayment = loan.payment;
+
+        if (loan.balance <= 0) {
+          updatedPayment = 0;
+          player.liabilities.splice(loanIndex, 1);
+        } else {
+          loan.payment = Math.round(loan.balance * 0.1);
+          updatedPayment = loan.payment;
+        }
+
+        player.totalExpenses = Math.max(0, player.totalExpenses - previousPayment + updatedPayment);
+        recalcPlayerIncome(player);
+      })
+    );
+
+    if (repaid > 0) {
+      state.addLog(
+        "log.bank.loanRepaid",
+        { loanId: liabilityId, amount: repaid, remaining, previousPayment, updatedPayment },
+        state.currentPlayerId
+      );
+    }
+  },
   clearLog: () => {
     set({ logs: [] });
   },
@@ -1115,6 +1397,10 @@ export const useGameStore = create<GameStore>((set, get) => {
     get().addLog("log.llmAction", { action }, playerId);
   },
   enterFastTrack: (playerId) => {
+    const state = get();
+    if (state.currentPlayerId !== playerId) return;
+    if (state.turnState === "awaitRoll" || state.turnState === "awaitCard" || state.turnState === "awaitCharity") return;
+
     let entered = false;
     set(
       produce<GameStore>((draft) => {
@@ -1148,6 +1434,7 @@ export const useGameStore = create<GameStore>((set, get) => {
   },
   donateCharity: () => {
     const state = get();
+    if (state.turnState !== "awaitCharity") return;
     const prompt = state.charityPrompt;
     if (!prompt) return;
     let donationApplied = false;
@@ -1159,9 +1446,11 @@ export const useGameStore = create<GameStore>((set, get) => {
           player.cash -= prompt.amount;
           player.charityTurns = 3;
           draft.charityPrompt = undefined;
+          draft.turnState = "awaitEnd";
           donationApplied = true;
         } else {
           draft.charityPrompt = undefined;
+          draft.turnState = "awaitEnd";
         }
       })
     );
@@ -1173,9 +1462,10 @@ export const useGameStore = create<GameStore>((set, get) => {
   },
   skipCharity: () => {
     const state = get();
+    if (state.turnState !== "awaitCharity") return;
     const prompt = state.charityPrompt;
     if (!prompt) return;
-    set({ charityPrompt: undefined });
+    set({ charityPrompt: undefined, turnState: "awaitEnd" });
     state.addLog("log.charity.skipped", { amount: prompt.amount }, prompt.playerId);
   }
   };

@@ -1,6 +1,7 @@
 "use client";
 
 import { BoardGrid } from "../components/BoardGrid";
+import { BankLoansPanel } from "../components/BankLoansPanel";
 import { ControlPanel } from "../components/ControlPanel";
 import { GameLog } from "../components/GameLog";
 import { JointVenturesPanel } from "../components/JointVenturesPanel";
@@ -45,6 +46,7 @@ export default function Page() {
           </div>
           <div className="grid" style={{ gap: "1.25rem" }}>
             <PlayerSidebar />
+            <BankLoansPanel />
             <JointVenturesPanel />
             <LoansPanel />
             <LLMPanel />
