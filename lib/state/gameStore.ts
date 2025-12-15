@@ -5,6 +5,17 @@ import { boardSquares, fastTrackSquares } from "../data/board";
 import { cards } from "../data/cards";
 import { dreams, scenarios } from "../data/scenarios";
 import { t } from "../i18n";
+import {
+  cardMentionsEveryone,
+  getAssetAvailableQuantity,
+  getStockSplitKind,
+  isOfferForcedLimitedSaleCard,
+  isOfferImproveCard,
+  isOfferSellCard,
+  isStockSplitEventCard,
+  isTradeableSecurityCard,
+  matchesOffer
+} from "./marketRules";
 import type {
   Asset,
   BaseCard,
@@ -45,6 +56,11 @@ type CardPreview = {
   primaryAction: "buy" | "pay" | "resolve";
 };
 
+type MarketResolution = {
+  buyQuantity?: number;
+  sell?: Record<string, Record<string, number>>;
+};
+
 type GameStore = {
   phase: GamePhase;
   board: typeof boardSquares;
@@ -69,6 +85,7 @@ type GameStore = {
   getCardPreview: (card: BaseCard, playerId?: string) => CardPreview;
   applySelectedCard: () => void;
   passSelectedCard: () => void;
+  resolveMarket: (payload?: MarketResolution) => void;
   rollDice: () => void;
   drawCard: (deck: DeckKey) => void;
   clearCard: () => void;
@@ -290,6 +307,9 @@ const deriveCardCostForPlayer = (card: BaseCard, player?: Player): number => {
   if (deckKey === "offers") {
     return 0;
   }
+  if (isTradeableSecurityCard(card)) {
+    return 0;
+  }
   if (deckKey === "doodads") {
     const ratio = typeof card.amount === "number" ? card.amount : undefined;
     if (typeof ratio === "number" && ratio > 0 && ratio < 1) {
@@ -305,12 +325,15 @@ const derivePrimaryAction = (card: BaseCard): CardPreview["primaryAction"] => {
   const deckKey = getDeckKey(card);
   if (deckKey === "doodads") return "pay";
   if (deckKey === "offers") return "resolve";
+  if (isTradeableSecurityCard(card) || isStockSplitEventCard(card)) return "resolve";
   return "buy";
 };
 
 const canPassCard = (card: BaseCard): boolean => {
   const deckKey = getDeckKey(card);
   if (deckKey === "doodads") return false;
+  if (deckKey === "offers") return false;
+  if (isTradeableSecurityCard(card) || isStockSplitEventCard(card)) return false;
   return true;
 };
 
@@ -331,13 +354,13 @@ const isDoodadCard = (card: BaseCard): boolean => {
 
 const inferAssetCategory = (card: BaseCard): Asset["category"] => {
   const typeLabel = card.type?.toLowerCase() ?? "";
-  if (/(stock|share|fund)/.test(typeLabel)) {
+  if (/(stock|share|fund|certificate|deposit|\bcd\b)/.test(typeLabel)) {
     return "stock";
   }
   if (/(estate|house|condo|plex|apartment|land)/.test(typeLabel)) {
     return "realEstate";
   }
-  if (/(business|company|franchise|venture)/.test(typeLabel)) {
+  if (/(business|company|franchise|venture|partnership)/.test(typeLabel)) {
     return "business";
   }
   if (/(collectible|coin|art|gold|jewel)/.test(typeLabel)) {
@@ -383,83 +406,7 @@ const ensureFunds = (player: Player, cost: number): FinancingOutcome => {
   return { ok: false, shortfall };
 };
 
-type OfferOutcome = {
-  cashGain: number;
-  passiveDelta: number;
-  affectedAssets: string[];
-};
-
-const matchesOffer = (asset: Asset, card: BaseCard): boolean => {
-  const offerType = (card.type ?? "").toString().toLowerCase();
-  const landType = (asset.metadata?.landType ?? asset.name).toString().toLowerCase();
-
-  if (offerType === "plex") {
-    return /plex/.test(landType) || landType === "duplex";
-  }
-  if (offerType === "apartment") {
-    if (!(landType === "apartment" || /unit/.test(landType))) return false;
-    const minUnits = typeof card.lowestUnit === "number" ? card.lowestUnit : 0;
-    const units = typeof asset.metadata?.units === "number" ? asset.metadata.units : 0;
-    return units >= minUnits;
-  }
-  if (offerType === "limited") {
-    return landType.includes("limited");
-  }
-  if (offerType === "business") {
-    return asset.category === "business";
-  }
-  if (offerType === "widget" || offerType === "software") {
-    return landType.includes(offerType);
-  }
-  if (offerType === "mall" || offerType === "car wash") {
-    return landType.includes(offerType);
-  }
-  if (offerType === "krugerrands" || offerType === "1500's spanish") {
-    return landType.includes(offerType.split(" ")[0]);
-  }
-  return landType === offerType;
-};
-
-const processOfferCard = (card: BaseCard, target: Player): OfferOutcome => {
-  const outcome: OfferOutcome = { cashGain: 0, passiveDelta: 0, affectedAssets: [] };
-  const cashflowOnly = typeof card.cashFlow === "number" && card.offer === undefined && card.offerPerUnit === undefined;
-
-  target.assets = target.assets.reduce<Asset[]>((kept, asset) => {
-    if (!matchesOffer(asset, card)) {
-      kept.push(asset);
-      return kept;
-    }
-
-    if (cashflowOnly) {
-      outcome.passiveDelta += card.cashFlow as number;
-      kept.push({ ...asset, cashflow: asset.cashflow + (card.cashFlow as number) });
-      return kept;
-    }
-
-    const units = typeof asset.metadata?.units === "number" ? asset.metadata.units : 1;
-    const salePrice = typeof card.offerPerUnit === "number" ? card.offerPerUnit * units : (typeof card.offer === "number" ? card.offer : 0);
-    const mortgage = typeof asset.metadata?.mortgage === "number" ? asset.metadata.mortgage : 0;
-    const net = Math.max(salePrice - mortgage, 0);
-    outcome.cashGain += net;
-    outcome.passiveDelta -= asset.cashflow;
-    outcome.affectedAssets.push(asset.id);
-    return kept;
-  }, []);
-
-  if (cashflowOnly && outcome.passiveDelta !== 0) {
-    target.passiveIncome += outcome.passiveDelta;
-    recalcPlayerIncome(target);
-  }
-  if (!cashflowOnly && outcome.cashGain > 0) {
-    target.cash += outcome.cashGain;
-    if (outcome.passiveDelta !== 0) {
-      target.passiveIncome += outcome.passiveDelta;
-      recalcPlayerIncome(target);
-    }
-  }
-
-  return outcome;
-};
+// Offer / Stock 结算会在 `resolveMarket()` 统一处理，避免在 `completeDeal()` 内暗自“自动卖光”。
 
 const recalcPlayerIncome = (player: Player) => {
   const salary = player.track === "fastTrack" ? 0 : player.scenario.salary;
@@ -748,6 +695,398 @@ export const useGameStore = create<GameStore>((set, get) => {
     }
     state.clearCard();
   },
+  resolveMarket: (payload) => {
+    const state = get();
+    if (state.turnState !== "awaitMarket") return;
+    if (!state.selectedCard) return;
+    if (!state.currentPlayerId) return;
+
+    const cardSnapshot = state.selectedCard;
+    const currentPlayerId = state.currentPlayerId;
+    const sellSelections = payload?.sell ?? {};
+    const buyQuantity = payload?.buyQuantity ?? 0;
+
+    const beforeStatus = captureFastTrackStatus(get().players);
+    const offerOutcomes: Array<{ playerId: string; cashGained: number; passiveDelta: number; assetsSold: number }> = [];
+    const stockTrades: Array<{
+      playerId: string;
+      symbol: string;
+      price: number;
+      soldShares: number;
+      boughtShares: number;
+      cashDelta: number;
+      dividendDelta: number;
+    }> = [];
+    const bankLoans: NonNullable<BankLoanResult>[] = [];
+
+    set(
+      produce<GameStore>((draft) => {
+        if (draft.turnState !== "awaitMarket") return;
+        const card = draft.selectedCard;
+        if (!card) return;
+        if (!draft.currentPlayerId) return;
+
+        const normalizeQuantity = (value: unknown, max: number): number => {
+          if (!Number.isFinite(max) || max <= 0) return 0;
+          const raw = typeof value === "number" ? value : Number(value);
+          if (!Number.isFinite(raw)) return 0;
+          const normalized = Math.floor(raw);
+          if (normalized <= 0) return 0;
+          return Math.min(normalized, Math.floor(max));
+        };
+
+        const buildTurnOrder = (): Player[] => {
+          const startIndex = draft.players.findIndex((p) => p.id === draft.currentPlayerId);
+          if (startIndex < 0) return draft.players;
+          return [...draft.players.slice(startIndex), ...draft.players.slice(0, startIndex)];
+        };
+
+        if (card.deckKey === "offers") {
+          const kind = isOfferImproveCard(card)
+            ? "improve"
+            : isOfferForcedLimitedSaleCard(card)
+              ? "forcedLimited"
+              : isOfferSellCard(card)
+                ? "sell"
+                : "noop";
+
+          const allowAllPlayers = kind !== "sell" || cardMentionsEveryone(card);
+          const allowedPlayerIds = new Set<string>(
+            allowAllPlayers ? draft.players.map((p) => p.id) : [draft.currentPlayerId].filter(Boolean)
+          );
+          const turnOrder = buildTurnOrder();
+
+          turnOrder.forEach((player) => {
+            if (!allowedPlayerIds.has(player.id)) return;
+            let cashGained = 0;
+            let passiveDelta = 0;
+            let assetsSold = 0;
+
+            if (kind === "improve") {
+              const delta = typeof card.cashFlow === "number" ? card.cashFlow : 0;
+              if (delta !== 0) {
+                player.assets = player.assets.map((asset) => {
+                  if (!matchesOffer(asset, card)) return asset;
+                  assetsSold += 1;
+                  passiveDelta += delta;
+                  return { ...asset, cashflow: asset.cashflow + delta };
+                });
+                if (passiveDelta !== 0) {
+                  player.passiveIncome += passiveDelta;
+                  recalcPlayerIncome(player);
+                }
+              }
+            } else if (kind === "forcedLimited") {
+              player.assets = player.assets.reduce<Asset[]>((kept, asset) => {
+                if (!matchesOffer(asset, card)) {
+                  kept.push(asset);
+                  return kept;
+                }
+                assetsSold += 1;
+                cashGained += Math.max(0, asset.cost) * 2;
+                passiveDelta -= asset.cashflow;
+                return kept;
+              }, []);
+              if (cashGained !== 0) {
+                player.cash += cashGained;
+              }
+              if (passiveDelta !== 0) {
+                player.passiveIncome += passiveDelta;
+                recalcPlayerIncome(player);
+              }
+            } else if (kind === "sell") {
+              const perPlayer = sellSelections[player.id] ?? {};
+              Object.entries(perPlayer).forEach(([assetId, requested]) => {
+                const index = player.assets.findIndex((asset) => asset.id === assetId);
+                if (index < 0) return;
+                const asset = player.assets[index];
+                if (!matchesOffer(asset, card)) return;
+
+                const available = getAssetAvailableQuantity(asset);
+                const quantityToSell = normalizeQuantity(requested, available);
+                if (quantityToSell <= 0) return;
+
+                const units = typeof asset.metadata?.units === "number" ? asset.metadata.units : 1;
+                const offerPerUnit = typeof card.offerPerUnit === "number" ? card.offerPerUnit : undefined;
+                const offer = typeof card.offer === "number" ? card.offer : undefined;
+                const gross =
+                  typeof offerPerUnit === "number"
+                    ? offerPerUnit * units
+                    : typeof offer === "number"
+                      ? asset.category === "collectible" && available > 1
+                        ? offer * quantityToSell
+                        : offer
+                      : 0;
+                const mortgage = typeof asset.metadata?.mortgage === "number" ? asset.metadata.mortgage : 0;
+                const net = Math.max(gross - mortgage, 0);
+
+                cashGained += net;
+                assetsSold += 1;
+
+                if (available <= quantityToSell || available === 1) {
+                  passiveDelta -= asset.cashflow;
+                  player.assets.splice(index, 1);
+                } else {
+                  player.assets[index] = { ...asset, quantity: available - quantityToSell };
+                }
+              });
+
+              if (cashGained !== 0) {
+                player.cash += cashGained;
+              }
+              if (passiveDelta !== 0) {
+                player.passiveIncome += passiveDelta;
+                recalcPlayerIncome(player);
+              }
+            }
+
+            if (cashGained !== 0 || passiveDelta !== 0 || assetsSold !== 0) {
+              offerOutcomes.push({ playerId: player.id, cashGained, passiveDelta, assetsSold });
+            }
+          });
+        } else if (isStockSplitEventCard(card)) {
+          const symbol = typeof card.symbol === "string" ? card.symbol : "";
+          const kind = getStockSplitKind(card);
+          if (symbol && kind) {
+            const normalizedSymbol = symbol.toLowerCase();
+            draft.players.forEach((player) => {
+              let passiveDelta = 0;
+              player.assets = player.assets.reduce<Asset[]>((kept, asset) => {
+                const assetSymbol = asset.metadata?.symbol;
+                if (typeof assetSymbol !== "string" || assetSymbol.toLowerCase() !== normalizedSymbol) {
+                  kept.push(asset);
+                  return kept;
+                }
+
+                const available = getAssetAvailableQuantity(asset);
+                const nextQuantity = kind === "split" ? available * 2 : Math.floor(available / 2);
+                const dividendPerShare =
+                  typeof asset.metadata?.dividendPerShare === "number"
+                    ? asset.metadata.dividendPerShare
+                    : typeof asset.metadata?.dividend === "number"
+                      ? asset.metadata.dividend
+                      : 0;
+                if (dividendPerShare) {
+                  passiveDelta += dividendPerShare * (nextQuantity - available);
+                }
+                if (nextQuantity <= 0) {
+                  return kept;
+                }
+                const nextCashflow = dividendPerShare ? dividendPerShare * nextQuantity : asset.cashflow;
+                kept.push({ ...asset, quantity: nextQuantity, cashflow: nextCashflow });
+                return kept;
+              }, []);
+              if (passiveDelta !== 0) {
+                player.passiveIncome += passiveDelta;
+                recalcPlayerIncome(player);
+              }
+            });
+          }
+        } else if (isTradeableSecurityCard(card)) {
+          const symbol = typeof card.symbol === "string" ? card.symbol : "";
+          const price = typeof card.price === "number" ? card.price : 0;
+          if (!symbol || !Number.isFinite(price) || price <= 0) {
+            // 无法解析的证券卡：当作已读并结束。
+          } else {
+            const allowAllPlayers = cardMentionsEveryone(card);
+            const allowedPlayerIds = new Set<string>(
+              allowAllPlayers ? draft.players.map((p) => p.id) : [draft.currentPlayerId].filter(Boolean)
+            );
+            const normalizedSymbol = symbol.toLowerCase();
+            const turnOrder = buildTurnOrder();
+
+            // 先按回合顺序处理卖出，避免“先买后卖”导致不必要的贷款。
+            turnOrder.forEach((player) => {
+              if (!allowedPlayerIds.has(player.id)) return;
+              const perPlayer = sellSelections[player.id] ?? {};
+              let soldShares = 0;
+              let cashDelta = 0;
+              let dividendDelta = 0;
+
+              Object.entries(perPlayer).forEach(([assetId, requested]) => {
+                const index = player.assets.findIndex((asset) => asset.id === assetId);
+                if (index < 0) return;
+                const asset = player.assets[index];
+                if (asset.category !== "stock") return;
+                const assetSymbol = asset.metadata?.symbol;
+                if (typeof assetSymbol !== "string" || assetSymbol.toLowerCase() !== normalizedSymbol) return;
+
+                const available = getAssetAvailableQuantity(asset);
+                const toSell = normalizeQuantity(requested, available);
+                if (toSell <= 0) return;
+
+                const dividendPerShare =
+                  typeof asset.metadata?.dividendPerShare === "number"
+                    ? asset.metadata.dividendPerShare
+                    : typeof asset.metadata?.dividend === "number"
+                      ? asset.metadata.dividend
+                      : 0;
+
+                const proceeds = price * toSell;
+                player.cash += proceeds;
+                cashDelta += proceeds;
+                soldShares += toSell;
+
+                if (dividendPerShare) {
+                  const delta = -dividendPerShare * toSell;
+                  dividendDelta += delta;
+                  player.passiveIncome += delta;
+                }
+
+                const remaining = available - toSell;
+                if (remaining <= 0) {
+                  player.assets.splice(index, 1);
+                } else {
+                  const nextCashflow = dividendPerShare ? dividendPerShare * remaining : asset.cashflow;
+                  player.assets[index] = { ...asset, quantity: remaining, cashflow: nextCashflow };
+                }
+              });
+
+              if (dividendDelta !== 0) {
+                recalcPlayerIncome(player);
+              }
+              if (soldShares > 0) {
+                stockTrades.push({
+                  playerId: player.id,
+                  symbol,
+                  price,
+                  soldShares,
+                  boughtShares: 0,
+                  cashDelta,
+                  dividendDelta
+                });
+              }
+            });
+
+            // 再处理当前玩家的买入。
+            const current = draft.players.find((p) => p.id === draft.currentPlayerId);
+            if (current) {
+              const toBuy = normalizeQuantity(buyQuantity, Number.MAX_SAFE_INTEGER);
+              if (toBuy > 0) {
+                const cost = price * toBuy;
+                const cashAvailable = current.cash;
+                const financing = ensureFunds(current, cost);
+                if (financing.ok) {
+                  if (financing.loan) bankLoans.push(financing.loan);
+                  current.cash -= cost;
+
+                  const dividendPerShare = typeof card.dividend === "number" ? card.dividend : 0;
+                  const existingIndex = current.assets.findIndex((asset) => {
+                    const assetSymbol = asset.metadata?.symbol;
+                    return asset.category === "stock" && typeof assetSymbol === "string" && assetSymbol.toLowerCase() === normalizedSymbol;
+                  });
+                  if (existingIndex >= 0) {
+                    const existing = current.assets[existingIndex];
+                    const existingQty = getAssetAvailableQuantity(existing);
+                    const nextQty = existingQty + toBuy;
+                    const nextCashflow = dividendPerShare ? dividendPerShare * nextQty : existing.cashflow;
+                    current.assets[existingIndex] = {
+                      ...existing,
+                      quantity: nextQty,
+                      cashflow: nextCashflow,
+                      cost: Math.max(0, existing.cost) + cost,
+                      metadata: { ...existing.metadata, dividendPerShare }
+                    };
+                  } else {
+                    current.assets.push({
+                      id: `stock-${uuid()}`,
+                      name: card.name ? `${card.name} (${symbol})` : symbol,
+                      category: "stock",
+                      cashflow: dividendPerShare ? dividendPerShare * toBuy : 0,
+                      cost,
+                      quantity: toBuy,
+                      metadata: {
+                        symbol,
+                        securityType: card.type,
+                        dividendPerShare
+                      }
+                    });
+                  }
+
+                  const dividendIncome = dividendPerShare ? dividendPerShare * toBuy : 0;
+                  if (dividendIncome) {
+                    current.passiveIncome += dividendIncome;
+                    recalcPlayerIncome(current);
+                  }
+
+                  stockTrades.push({
+                    playerId: current.id,
+                    symbol,
+                    price,
+                    soldShares: 0,
+                    boughtShares: toBuy,
+                    cashDelta: -cost,
+                    dividendDelta: dividendIncome
+                  });
+                } else {
+                  // 目前只会发生在 Fast Track（禁止银行贷款），但 Fast Track 不能抽 Small/Big deal。
+                  stockTrades.push({
+                    playerId: current.id,
+                    symbol,
+                    price,
+                    soldShares: 0,
+                    boughtShares: 0,
+                    cashDelta: 0,
+                    dividendDelta: 0
+                  });
+                  // 记录失败但不改变状态，避免卡死。
+                  current.cash = cashAvailable;
+                }
+              }
+            }
+          }
+        }
+
+        discardSelectedCard(draft);
+        draft.turnState = "awaitEnd";
+      })
+    );
+
+    detectFastTrackUnlocks(beforeStatus, get().players, (player) => get().addLog("log.fastTrackUnlocked", undefined, player.id));
+
+    const after = get();
+    bankLoans.forEach((loan) => after.addLog("log.bank.loanIssued", { principal: loan.principal, payment: loan.payment }, currentPlayerId));
+
+    if (offerOutcomes.length > 0) {
+      offerOutcomes.forEach((outcome) => {
+        after.addLog(
+          "log.offerResolved",
+          { cardId: cardSnapshot.id, cashGained: outcome.cashGained, passiveDelta: outcome.passiveDelta, assetsSold: outcome.assetsSold },
+          outcome.playerId
+        );
+      });
+    }
+
+    if (stockTrades.length > 0) {
+      stockTrades.forEach((trade) => {
+        after.addLog(
+          "log.stock.trade",
+          {
+            cardId: cardSnapshot.id,
+            symbol: trade.symbol,
+            price: trade.price,
+            soldShares: trade.soldShares,
+            boughtShares: trade.boughtShares,
+            cashDelta: trade.cashDelta,
+            dividendDelta: trade.dividendDelta
+          },
+          trade.playerId
+        );
+      });
+    }
+
+    after.addLog(
+      "log.market.resolved",
+      {
+        cardId: cardSnapshot.id,
+        deck: cardSnapshot.deckKey,
+        type: cardSnapshot.type,
+        offerPlayers: offerOutcomes.length,
+        stockTrades: stockTrades.length
+      },
+      currentPlayerId
+    );
+  },
   rollDice: () => {
     const state = get();
     if (!state.currentPlayerId) {
@@ -838,7 +1177,12 @@ export const useGameStore = create<GameStore>((set, get) => {
         if (!currentSquare || currentSquare.type !== "OPPORTUNITY") return;
         const drawn = drawCardForPlayer(draft, deck, player);
         if (drawn) {
-          draft.turnState = "awaitCard";
+          const card = draft.selectedCard;
+          if (card && (isTradeableSecurityCard(card) || isStockSplitEventCard(card))) {
+            draft.turnState = "awaitMarket";
+          } else {
+            draft.turnState = "awaitCard";
+          }
         }
       })
     );
@@ -849,6 +1193,10 @@ export const useGameStore = create<GameStore>((set, get) => {
     let passDeniedPayload: Record<string, unknown> | null = null;
     set(
       produce<GameStore>((draft) => {
+        if (draft.turnState === "awaitMarket" && draft.selectedCard) {
+          passDeniedPayload = { cardId: draft.selectedCard.id, deck: draft.selectedCard.deckKey };
+          return;
+        }
         if (draft.turnState === "awaitCard" && draft.selectedCard) {
           const preview = buildCardPreview(
             draft.selectedCard,
@@ -921,7 +1269,45 @@ export const useGameStore = create<GameStore>((set, get) => {
               recalcPlayerIncome(target);
             }
 
-            if (card.name) {
+            const typeLabel = card.type?.toLowerCase() ?? "";
+            const isCoinAsset = typeLabel.includes("coin");
+
+            if (isCoinAsset && card.name) {
+              const quantityDelta = typeof card.amount === "number" && Number.isFinite(card.amount) ? Math.max(1, Math.floor(card.amount)) : 1;
+              const purchaseCost = deriveAssetCost(card, Math.abs(cashDelta));
+              const existingIndex = target.assets.findIndex(
+                (asset) => asset.category === "collectible" && asset.name === card.name
+              );
+              if (existingIndex >= 0) {
+                const existing = target.assets[existingIndex];
+                const existingQty = getAssetAvailableQuantity(existing);
+                const updated: Asset = {
+                  ...existing,
+                  quantity: existingQty + quantityDelta,
+                  cost: Math.max(0, existing.cost) + purchaseCost
+                };
+                target.assets[existingIndex] = updated;
+                recordedAsset = updated;
+              } else {
+                const asset: Asset = {
+                  id: `${card.id}-${uuid()}`,
+                  name: card.name,
+                  category: "collectible",
+                  cashflow: 0,
+                  cost: purchaseCost,
+                  quantity: quantityDelta,
+                  metadata: {
+                    cardId: card.id,
+                    deck: card.deckKey,
+                    landType: getLandType(card),
+                    units: typeof card.units === "number" ? card.units : undefined,
+                    mortgage: typeof card.mortgage === "number" ? card.mortgage : undefined
+                  }
+                };
+                target.assets.push(asset);
+                recordedAsset = asset;
+              }
+            } else if (card.name) {
               const asset: Asset = {
                 id: `${card.id}-${uuid()}`,
                 name: card.name,
@@ -1046,7 +1432,7 @@ export const useGameStore = create<GameStore>((set, get) => {
             discardSelectedCard(draft);
             {
               const drawn = drawCardForPlayer(draft, "offers", target);
-              draft.turnState = drawn ? "awaitCard" : "awaitEnd";
+              draft.turnState = drawn ? "awaitMarket" : "awaitEnd";
             }
             break;
           case "CHARITY":
@@ -1201,7 +1587,7 @@ export const useGameStore = create<GameStore>((set, get) => {
     const state = get();
     if (state.phase === "setup" || state.phase === "finished") return;
     if (!state.currentPlayerId || state.players.length === 0) return;
-    if (state.turnState === "awaitRoll" || state.turnState === "awaitAction" || state.turnState === "awaitCard") {
+    if (state.turnState === "awaitRoll" || state.turnState === "awaitAction" || state.turnState === "awaitCard" || state.turnState === "awaitMarket") {
       return;
     }
     if (state.charityPrompt && state.charityPrompt.playerId === state.currentPlayerId) {
@@ -1399,7 +1785,7 @@ export const useGameStore = create<GameStore>((set, get) => {
   enterFastTrack: (playerId) => {
     const state = get();
     if (state.currentPlayerId !== playerId) return;
-    if (state.turnState === "awaitRoll" || state.turnState === "awaitCard" || state.turnState === "awaitCharity") return;
+    if (state.turnState === "awaitRoll" || state.turnState === "awaitCard" || state.turnState === "awaitMarket" || state.turnState === "awaitCharity") return;
 
     let entered = false;
     set(

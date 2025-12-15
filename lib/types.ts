@@ -108,7 +108,7 @@ export type PlayerLoan = {
 
 export type GamePhase = "setup" | "dream" | "ratRace" | "fastTrack" | "finished";
 
-export type TurnState = "awaitRoll" | "awaitAction" | "awaitCard" | "awaitCharity" | "awaitEnd";
+export type TurnState = "awaitRoll" | "awaitAction" | "awaitCard" | "awaitMarket" | "awaitCharity" | "awaitEnd";
 
 export type GameLogEntry = {
   id: string;

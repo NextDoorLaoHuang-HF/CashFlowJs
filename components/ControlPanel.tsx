@@ -1,9 +1,19 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { t } from "../lib/i18n";
 import { translateCardText } from "../lib/cardTranslations";
 import { type DeckKey, useGameStore } from "../lib/state/gameStore";
+import {
+  cardMentionsEveryone,
+  getAssetAvailableQuantity,
+  isOfferForcedLimitedSaleCard,
+  isOfferImproveCard,
+  isOfferSellCard,
+  isStockSplitEventCard,
+  isTradeableSecurityCard,
+  matchesOffer
+} from "../lib/state/marketRules";
 
 const deckLabels: Record<DeckKey, string> = {
   smallDeals: "controls.drawSmall",
@@ -20,6 +30,7 @@ export function ControlPanel() {
     drawCard,
     applySelectedCard,
     passSelectedCard,
+    resolveMarket,
     getCardPreview,
     selectedCard,
     dice,
@@ -39,6 +50,7 @@ export function ControlPanel() {
     drawCard: state.drawCard,
     applySelectedCard: state.applySelectedCard,
     passSelectedCard: state.passSelectedCard,
+    resolveMarket: state.resolveMarket,
     getCardPreview: state.getCardPreview,
     selectedCard: state.selectedCard,
     dice: state.dice,
@@ -102,6 +114,30 @@ export function ControlPanel() {
   const isExpense = cardPreview?.primaryAction === "pay";
   const canPass = Boolean(cardPreview?.canPass) && turnState === "awaitCard";
   const canApply = turnState === "awaitCard";
+
+  const [marketBuyQuantity, setMarketBuyQuantity] = useState(0);
+  const [marketSell, setMarketSell] = useState<Record<string, Record<string, number>>>({});
+  const selectedCardId = selectedCard?.id;
+
+  useEffect(() => {
+    if (turnState !== "awaitMarket" || !selectedCardId) {
+      setMarketBuyQuantity(0);
+      setMarketSell({});
+      return;
+    }
+    setMarketBuyQuantity(0);
+    setMarketSell({});
+  }, [turnState, selectedCardId]);
+
+  const setMarketSellQuantity = (playerId: string, assetId: string, quantity: number) => {
+    setMarketSell((prev) => ({
+      ...prev,
+      [playerId]: {
+        ...(prev[playerId] ?? {}),
+        [assetId]: quantity
+      }
+    }));
+  };
 
   return (
     <div className="card grid" style={{ gap: "0.8rem" }}>
@@ -226,6 +262,206 @@ export function ControlPanel() {
       )}
 
       {selectedCard ? (
+        turnState === "awaitMarket" ? (
+          <div style={{ borderRadius: 12, border: "1px dashed rgba(255,255,255,0.2)", padding: "0.75rem", display: "grid", gap: "0.75rem" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.75rem", flexWrap: "wrap" }}>
+              <div>
+                <strong>{translateCardText(settings.locale, selectedCard.name)}</strong>
+                <div style={{ color: "var(--muted)", fontSize: "0.9rem" }}>{translateCardText(settings.locale, selectedCard.description)}</div>
+              </div>
+              <div style={{ color: "var(--muted)", fontSize: "0.85rem" }}>{t(settings.locale, "market.windowTitle")}</div>
+            </div>
+
+            {(selectedCard.rule || selectedCard.rule1 || selectedCard.rule2) && (
+              <div style={{ display: "grid", gap: "0.25rem" }}>
+                {selectedCard.rule && (
+                  <div style={{ color: "var(--accent)", fontSize: "0.85rem", fontStyle: "italic" }}>
+                    {translateCardText(settings.locale, selectedCard.rule)}
+                  </div>
+                )}
+                {selectedCard.rule1 && (
+                  <div style={{ color: "var(--accent)", fontSize: "0.85rem", fontStyle: "italic" }}>
+                    {translateCardText(settings.locale, selectedCard.rule1)}
+                  </div>
+                )}
+                {selectedCard.rule2 && (
+                  <div style={{ color: "var(--accent)", fontSize: "0.85rem", fontStyle: "italic" }}>
+                    {translateCardText(settings.locale, selectedCard.rule2)}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {isTradeableSecurityCard(selectedCard) && (
+              <div className="card" style={{ background: "rgba(255,255,255,0.03)", display: "grid", gap: "0.5rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
+                  <div>
+                    <strong>{t(settings.locale, "market.stock.title")}</strong>
+                    <div style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
+                      {t(settings.locale, "market.stock.symbol")}: {String(selectedCard.symbol ?? "—")} · {t(settings.locale, "market.stock.price")}: $
+                      {typeof selectedCard.price === "number" ? selectedCard.price.toLocaleString() : "—"}
+                    </div>
+                  </div>
+                  <div style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
+                    {t(settings.locale, "market.stock.everyoneSell")}: {cardMentionsEveryone(selectedCard) ? t(settings.locale, "market.yes") : t(settings.locale, "market.no")}
+                  </div>
+                </div>
+
+                {currentPlayer && currentPlayer.id === currentPlayerId && (
+                  <label className="grid" style={{ gap: "0.35rem" }}>
+                    <span style={{ color: "var(--muted)" }}>{t(settings.locale, "market.stock.buyQuantity")}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={marketBuyQuantity}
+                      onChange={(e) => setMarketBuyQuantity(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                      style={{
+                        background: "rgba(255,255,255,0.05)",
+                        borderRadius: 8,
+                        border: "1px solid rgba(255,255,255,0.08)",
+                        padding: "0.5rem 0.75rem",
+                        color: "var(--text)"
+                      }}
+                    />
+                    <span style={{ color: "var(--muted)", fontSize: "0.85rem" }}>
+                      {t(settings.locale, "market.stock.buyCost")}: $
+                      {typeof selectedCard.price === "number" ? (selectedCard.price * marketBuyQuantity).toLocaleString() : "—"}
+                    </span>
+                  </label>
+                )}
+              </div>
+            )}
+
+            {isStockSplitEventCard(selectedCard) && (
+              <div style={{ color: "var(--muted)", fontSize: "0.9rem" }}>{t(settings.locale, "market.split.hint")}</div>
+            )}
+
+            {selectedCard.deckKey === "offers" && (
+              <div style={{ color: "var(--muted)", fontSize: "0.9rem" }}>
+                {isOfferImproveCard(selectedCard)
+                  ? t(settings.locale, "market.offer.improveHint")
+                  : isOfferForcedLimitedSaleCard(selectedCard)
+                    ? t(settings.locale, "market.offer.forcedHint")
+                    : isOfferSellCard(selectedCard)
+                      ? cardMentionsEveryone(selectedCard)
+                        ? t(settings.locale, "market.offer.everyoneSellHint")
+                        : t(settings.locale, "market.offer.currentOnlyHint")
+                      : t(settings.locale, "market.offer.unknownHint")}
+              </div>
+            )}
+
+            {(() => {
+              const isOffer = selectedCard.deckKey === "offers";
+              const isSecurity = isTradeableSecurityCard(selectedCard);
+              const isSellOffer = isOffer && isOfferSellCard(selectedCard);
+              const shouldShowSellInputs = (isOffer && isSellOffer) || isSecurity;
+              if (!shouldShowSellInputs) return null;
+
+              const allowAllPlayers = cardMentionsEveryone(selectedCard);
+              const eligiblePlayers = allowAllPlayers ? players : currentPlayer ? [currentPlayer] : [];
+              const normalizedSymbol =
+                isSecurity && typeof selectedCard.symbol === "string" ? selectedCard.symbol.toLowerCase() : "";
+
+              return (
+                <div className="grid" style={{ gap: "0.75rem" }}>
+                  {eligiblePlayers.map((player) => {
+                    const eligibleAssets = isOffer
+                      ? player.assets.filter((asset) => matchesOffer(asset, selectedCard))
+                      : player.assets.filter((asset) => {
+                          const assetSymbol = asset.metadata?.symbol;
+                          return (
+                            asset.category === "stock" &&
+                            typeof assetSymbol === "string" &&
+                            assetSymbol.toLowerCase() === normalizedSymbol
+                          );
+                        });
+
+                    if (eligibleAssets.length === 0) {
+                      return (
+                        <div key={player.id} className="card" style={{ background: "rgba(255,255,255,0.02)" }}>
+                          <strong>{player.name}</strong>
+                          <div style={{ color: "var(--muted)", fontSize: "0.85rem" }}>{t(settings.locale, "market.noEligibleAssets")}</div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div key={player.id} className="card grid" style={{ background: "rgba(255,255,255,0.02)", gap: "0.6rem" }}>
+                        <strong>{player.name}</strong>
+                        {eligibleAssets.map((asset) => {
+                          const available = getAssetAvailableQuantity(asset);
+                          const currentValue = marketSell[player.id]?.[asset.id] ?? 0;
+                          return (
+                            <label key={asset.id} className="grid" style={{ gap: "0.35rem" }}>
+                              <span style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", flexWrap: "wrap" }}>
+                                <span>
+                                  {asset.name}{" "}
+                                  <span style={{ color: "var(--muted)" }}>
+                                    · {t(settings.locale, "market.available")}: {available}
+                                  </span>
+                                </span>
+                                <span style={{ color: "var(--muted)" }}>
+                                  {t(settings.locale, "market.cashflow")}: ${asset.cashflow.toLocaleString()}
+                                </span>
+                              </span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={available}
+                                step={1}
+                                value={currentValue}
+                                onChange={(e) => setMarketSellQuantity(player.id, asset.id, Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                                style={{
+                                  background: "rgba(255,255,255,0.05)",
+                                  borderRadius: 8,
+                                  border: "1px solid rgba(255,255,255,0.08)",
+                                  padding: "0.5rem 0.75rem",
+                                  color: "var(--text)"
+                                }}
+                              />
+                            </label>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <button
+                onClick={() => resolveMarket({ buyQuantity: marketBuyQuantity, sell: marketSell })}
+                style={{
+                  padding: "0.5rem 1rem",
+                  borderRadius: 10,
+                  flex: 1,
+                  background: "rgba(34,197,94,0.25)",
+                  color: "#fff"
+                }}
+              >
+                {t(settings.locale, "controls.resolve")}
+              </button>
+              <button
+                onClick={() => {
+                  setMarketBuyQuantity(0);
+                  setMarketSell({});
+                  resolveMarket({ buyQuantity: 0, sell: {} });
+                }}
+                style={{
+                  padding: "0.5rem 1rem",
+                  borderRadius: 10,
+                  flex: 1,
+                  background: "rgba(255,255,255,0.08)",
+                  color: "#fff"
+                }}
+              >
+                {t(settings.locale, "market.skipAll")}
+              </button>
+            </div>
+          </div>
+        ) : (
         <div style={{ borderRadius: 12, border: "1px dashed rgba(255,255,255,0.2)", padding: "0.75rem" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <strong>{translateCardText(settings.locale, selectedCard.name)}</strong>
@@ -301,6 +537,7 @@ export function ControlPanel() {
             </button>
           </div>
         </div>
+        )
       ) : (
         <p style={{ color: "var(--muted)", fontSize: "0.9rem" }}>{t(settings.locale, "controls.emptyPrompt")}</p>
       )}
