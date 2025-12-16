@@ -35,8 +35,19 @@ export function PlayerSidebar() {
             style={{
               padding: "0.75rem",
               borderRadius: 12,
-              background: player.id === currentPlayerId ? "rgba(68, 208, 123, 0.15)" : "rgba(255,255,255,0.03)",
-              border: player.id === currentPlayerId ? "1px solid rgba(68,208,123,0.5)" : "1px solid rgba(255,255,255,0.05)"
+              background:
+                player.status === "bankrupt"
+                  ? "rgba(239,68,68,0.12)"
+                  : player.id === currentPlayerId
+                    ? "rgba(68, 208, 123, 0.15)"
+                    : "rgba(255,255,255,0.03)",
+              border:
+                player.status === "bankrupt"
+                  ? "1px solid rgba(239,68,68,0.45)"
+                  : player.id === currentPlayerId
+                    ? "1px solid rgba(68,208,123,0.5)"
+                    : "1px solid rgba(255,255,255,0.05)",
+              opacity: player.status === "bankrupt" ? 0.7 : 1
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
@@ -50,6 +61,19 @@ export function PlayerSidebar() {
                 }}
               />
               <strong>{player.name}</strong>
+              {player.status === "bankrupt" && (
+                <span
+                  style={{
+                    fontSize: "0.7rem",
+                    padding: "0.1rem 0.4rem",
+                    borderRadius: 999,
+                    background: "rgba(239,68,68,0.25)",
+                    color: "var(--text)"
+                  }}
+                >
+                  {t(locale, "players.status.bankrupt")}
+                </span>
+              )}
               {player.track === "fastTrack" && (
                 <span
                   style={{

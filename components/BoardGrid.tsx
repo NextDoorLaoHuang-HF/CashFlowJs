@@ -50,7 +50,9 @@ export function BoardGrid() {
             }}
           >
             {section.squares.map((square) => {
-              const occupants = players.filter((player) => player.track === section.track && player.position === square.id);
+              const occupants = players.filter(
+                (player) => player.status !== "bankrupt" && player.track === section.track && player.position === square.id
+              );
               const label = t(settings.locale, `board.square.${square.type.toLowerCase()}`);
               return (
                 <div

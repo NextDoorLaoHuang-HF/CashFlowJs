@@ -302,12 +302,53 @@ const getDeckKey = (card: BaseCard): DeckKey | null => {
   return null;
 };
 
+const isPropertyDamageCard = (card: BaseCard): boolean => {
+  const typeLabel = (card.type ?? "").toString().toLowerCase();
+  return typeLabel.includes("property damage");
+};
+
+const hasRentalProperty = (player: Player): boolean =>
+  player.assets.some((asset) => {
+    if (asset.category !== "realEstate") return false;
+    const landType = (asset.metadata?.landType ?? asset.name).toString().toLowerCase();
+    return /(\d+br\/\d+ba|duplex|plex|apartment)/.test(landType);
+  });
+
+const hasEightPlex = (player: Player): boolean =>
+  player.assets.some((asset) => {
+    if (asset.category !== "realEstate") return false;
+    const units = asset.metadata?.units;
+    return typeof units === "number" && Number.isFinite(units) && units === 8;
+  });
+
+const shouldPayPropertyDamage = (card: BaseCard, player?: Player): boolean => {
+  if (!player) return false;
+  const propertyType = typeof card.propertyType === "string" ? card.propertyType.toLowerCase() : "";
+  if (propertyType === "rental") return hasRentalProperty(player);
+  if (propertyType === "8-plex" || propertyType === "8plex") return hasEightPlex(player);
+  return false;
+};
+
+const isExpenseCard = (card: BaseCard): boolean => {
+  if (isPropertyDamageCard(card)) {
+    return true;
+  }
+  const deckKey = typeof card.deckKey === "string" ? card.deckKey.toLowerCase() : "";
+  if (deckKey === "doodads") {
+    return true;
+  }
+  return card.type?.toLowerCase().includes("doodad") ?? false;
+};
+
 const deriveCardCostForPlayer = (card: BaseCard, player?: Player): number => {
   const deckKey = getDeckKey(card);
   if (deckKey === "offers") {
     return 0;
   }
   if (isTradeableSecurityCard(card)) {
+    return 0;
+  }
+  if (isPropertyDamageCard(card) && !shouldPayPropertyDamage(card, player)) {
     return 0;
   }
   if (deckKey === "doodads") {
@@ -323,6 +364,7 @@ const deriveCardCostForPlayer = (card: BaseCard, player?: Player): number => {
 
 const derivePrimaryAction = (card: BaseCard): CardPreview["primaryAction"] => {
   const deckKey = getDeckKey(card);
+  if (isPropertyDamageCard(card)) return "pay";
   if (deckKey === "doodads") return "pay";
   if (deckKey === "offers") return "resolve";
   if (isTradeableSecurityCard(card) || isStockSplitEventCard(card)) return "resolve";
@@ -331,6 +373,7 @@ const derivePrimaryAction = (card: BaseCard): CardPreview["primaryAction"] => {
 
 const canPassCard = (card: BaseCard): boolean => {
   const deckKey = getDeckKey(card);
+  if (isPropertyDamageCard(card)) return false;
   if (deckKey === "doodads") return false;
   if (deckKey === "offers") return false;
   if (isTradeableSecurityCard(card) || isStockSplitEventCard(card)) return false;
@@ -343,14 +386,6 @@ const buildCardPreview = (card: BaseCard, player?: Player): CardPreview => ({
   canPass: canPassCard(card),
   primaryAction: derivePrimaryAction(card)
 });
-
-const isDoodadCard = (card: BaseCard): boolean => {
-  const deckKey = typeof card.deckKey === "string" ? card.deckKey.toLowerCase() : "";
-  if (deckKey === "doodads") {
-    return true;
-  }
-  return card.type?.toLowerCase().includes("doodad") ?? false;
-};
 
 const inferAssetCategory = (card: BaseCard): Asset["category"] => {
   const typeLabel = card.type?.toLowerCase() ?? "";
@@ -510,6 +545,7 @@ const buildPlayer = (setup: SetupPlayer, settings: GameSettings): Player => {
     llmModel: setup.llmModel,
     llmPersona: setup.llmPersona,
     fastTrackUnlocked: false,
+    status: "active",
     track: "ratRace"
   };
 };
@@ -540,14 +576,30 @@ export const useGameStore = create<GameStore>((set, get) => {
 
         const currentIndex = draft.players.findIndex((player) => player.id === draft.currentPlayerId);
         const safeCurrentIndex = currentIndex >= 0 ? currentIndex : 0;
-        const nextIndex = (safeCurrentIndex + 1) % draft.players.length;
+        let nextIndex: number | null = null;
+        let wrapped = false;
+        for (let offset = 1; offset <= draft.players.length; offset += 1) {
+          const candidate = (safeCurrentIndex + offset) % draft.players.length;
+          const candidatePlayer = draft.players[candidate];
+          if (candidatePlayer && candidatePlayer.status !== "bankrupt") {
+            nextIndex = candidate;
+            wrapped = safeCurrentIndex + offset >= draft.players.length;
+            break;
+          }
+        }
+        if (nextIndex === null) {
+          draft.phase = "finished";
+          draft.currentPlayerId = null;
+          draft.turnState = "awaitEnd";
+          return;
+        }
 
         discardSelectedCard(draft);
         draft.charityPrompt = undefined;
         draft.dice = undefined;
 
         draft.currentPlayerId = draft.players[nextIndex].id;
-        if (safeCurrentIndex === draft.players.length - 1) {
+        if (wrapped) {
           draft.turn += 1;
         }
         draft.turnState = "awaitRoll";
@@ -1228,7 +1280,6 @@ export const useGameStore = create<GameStore>((set, get) => {
     const beforeStatus = captureFastTrackStatus(get().players);
     let recordedAsset: Asset | undefined;
     let appliedCashflow = 0;
-    let offerOutcome: OfferOutcome | undefined;
     let bankLoan: NonNullable<BankLoanResult> | undefined;
     let dealBlockedPayload: Record<string, unknown> | null = null;
     set(
@@ -1236,84 +1287,61 @@ export const useGameStore = create<GameStore>((set, get) => {
         const target = draft.players.find((p) => p.id === targetPlayerId);
         if (!target) return;
 
-        const targetDeck = (card.deckKey ?? "") as DeckKey;
-        if (targetDeck === "offers") {
-          offerOutcome = processOfferCard(card, target);
-        } else {
-          if (cashDelta < 0) {
-            const cost = Math.abs(cashDelta);
-            const cashAvailable = target.cash;
-            const financing = ensureFunds(target, cost);
-            if (!financing.ok) {
-              dealBlockedPayload = {
-                cardId: card.id,
-                deck: card.deckKey,
-                cost,
-                cashAvailable,
-                shortfall: financing.shortfall,
-                track: target.track
-              };
-              return;
-            }
-            bankLoan = financing.loan;
+        if (cashDelta < 0) {
+          const cost = Math.abs(cashDelta);
+          const cashAvailable = target.cash;
+          const financing = ensureFunds(target, cost);
+          if (!financing.ok) {
+            dealBlockedPayload = {
+              cardId: card.id,
+              deck: card.deckKey,
+              cost,
+              cashAvailable,
+              shortfall: financing.shortfall,
+              track: target.track
+            };
+            return;
+          }
+          bankLoan = financing.loan;
+        }
+
+        target.cash += cashDelta;
+        const isAsset = !isExpenseCard(card);
+        const normalizedCashflow = deriveCardCashflow(card, cashflowDelta);
+
+        if (isAsset) {
+          appliedCashflow = normalizedCashflow;
+          if (normalizedCashflow !== 0) {
+            target.passiveIncome += normalizedCashflow;
+            recalcPlayerIncome(target);
           }
 
-          target.cash += cashDelta;
-          const isAsset = !isDoodadCard(card);
-          const normalizedCashflow = deriveCardCashflow(card, cashflowDelta);
+          const typeLabel = card.type?.toLowerCase() ?? "";
+          const isCoinAsset = typeLabel.includes("coin");
 
-          if (isAsset) {
-            appliedCashflow = normalizedCashflow;
-            if (normalizedCashflow !== 0) {
-              target.passiveIncome += normalizedCashflow;
-              recalcPlayerIncome(target);
-            }
-
-            const typeLabel = card.type?.toLowerCase() ?? "";
-            const isCoinAsset = typeLabel.includes("coin");
-
-            if (isCoinAsset && card.name) {
-              const quantityDelta = typeof card.amount === "number" && Number.isFinite(card.amount) ? Math.max(1, Math.floor(card.amount)) : 1;
-              const purchaseCost = deriveAssetCost(card, Math.abs(cashDelta));
-              const existingIndex = target.assets.findIndex(
-                (asset) => asset.category === "collectible" && asset.name === card.name
-              );
-              if (existingIndex >= 0) {
-                const existing = target.assets[existingIndex];
-                const existingQty = getAssetAvailableQuantity(existing);
-                const updated: Asset = {
-                  ...existing,
-                  quantity: existingQty + quantityDelta,
-                  cost: Math.max(0, existing.cost) + purchaseCost
-                };
-                target.assets[existingIndex] = updated;
-                recordedAsset = updated;
-              } else {
-                const asset: Asset = {
-                  id: `${card.id}-${uuid()}`,
-                  name: card.name,
-                  category: "collectible",
-                  cashflow: 0,
-                  cost: purchaseCost,
-                  quantity: quantityDelta,
-                  metadata: {
-                    cardId: card.id,
-                    deck: card.deckKey,
-                    landType: getLandType(card),
-                    units: typeof card.units === "number" ? card.units : undefined,
-                    mortgage: typeof card.mortgage === "number" ? card.mortgage : undefined
-                  }
-                };
-                target.assets.push(asset);
-                recordedAsset = asset;
-              }
-            } else if (card.name) {
+          if (isCoinAsset && card.name) {
+            const quantityDelta =
+              typeof card.amount === "number" && Number.isFinite(card.amount) ? Math.max(1, Math.floor(card.amount)) : 1;
+            const purchaseCost = deriveAssetCost(card, Math.abs(cashDelta));
+            const existingIndex = target.assets.findIndex((asset) => asset.category === "collectible" && asset.name === card.name);
+            if (existingIndex >= 0) {
+              const existing = target.assets[existingIndex];
+              const existingQty = getAssetAvailableQuantity(existing);
+              const updated: Asset = {
+                ...existing,
+                quantity: existingQty + quantityDelta,
+                cost: Math.max(0, existing.cost) + purchaseCost
+              };
+              target.assets[existingIndex] = updated;
+              recordedAsset = updated;
+            } else {
               const asset: Asset = {
                 id: `${card.id}-${uuid()}`,
                 name: card.name,
-                category: inferAssetCategory(card),
-                cashflow: normalizedCashflow,
-                cost: deriveAssetCost(card, Math.abs(cashDelta)),
+                category: "collectible",
+                cashflow: 0,
+                cost: purchaseCost,
+                quantity: quantityDelta,
                 metadata: {
                   cardId: card.id,
                   deck: card.deckKey,
@@ -1325,18 +1353,35 @@ export const useGameStore = create<GameStore>((set, get) => {
               target.assets.push(asset);
               recordedAsset = asset;
             }
-          } else if (typeof card.loan === "number" && typeof card.payment === "number") {
-            target.liabilities.push({
-              id: `${card.id}-loan-${uuid()}`,
-              name: card.name ?? "Loan",
-              payment: card.payment,
-              balance: card.loan,
-              category: "loan",
-              metadata: { source: card.id }
-            });
-            target.totalExpenses += card.payment;
-            recalcPlayerIncome(target);
+          } else if (card.name) {
+            const asset: Asset = {
+              id: `${card.id}-${uuid()}`,
+              name: card.name,
+              category: inferAssetCategory(card),
+              cashflow: normalizedCashflow,
+              cost: deriveAssetCost(card, Math.abs(cashDelta)),
+              metadata: {
+                cardId: card.id,
+                deck: card.deckKey,
+                landType: getLandType(card),
+                units: typeof card.units === "number" ? card.units : undefined,
+                mortgage: typeof card.mortgage === "number" ? card.mortgage : undefined
+              }
+            };
+            target.assets.push(asset);
+            recordedAsset = asset;
           }
+        } else if (typeof card.loan === "number" && typeof card.payment === "number") {
+          target.liabilities.push({
+            id: `${card.id}-loan-${uuid()}`,
+            name: card.name ?? "Loan",
+            payment: card.payment,
+            balance: card.loan,
+            category: "loan",
+            metadata: { source: card.id }
+          });
+          target.totalExpenses += card.payment;
+          recalcPlayerIncome(target);
         }
 
         draft.turnState = "awaitEnd";
@@ -1350,30 +1395,17 @@ export const useGameStore = create<GameStore>((set, get) => {
     if (bankLoan) {
       get().addLog("log.bank.loanIssued", { principal: bankLoan.principal, payment: bankLoan.payment }, playerId);
     }
-    if (offerOutcome) {
-      get().addLog(
-        "log.offerResolved",
-        {
-          cardId: card.id,
-          cashGained: offerOutcome.cashGain,
-          passiveDelta: offerOutcome.passiveDelta,
-          assetsSold: offerOutcome.affectedAssets.length
-        },
-        playerId
-      );
-    } else {
-      get().addLog(
-        "log.dealCompleted",
-        {
-          cardId: card.id,
-          cashDelta,
-          cashflowDelta: appliedCashflow || undefined,
-          assetCategory: recordedAsset?.category,
-          assetCost: recordedAsset?.cost
-        },
-        playerId
-      );
-    }
+    get().addLog(
+      "log.dealCompleted",
+      {
+        cardId: card.id,
+        cashDelta,
+        cashflowDelta: appliedCashflow || undefined,
+        assetCategory: recordedAsset?.category,
+        assetCost: recordedAsset?.cost
+      },
+      playerId
+    );
     get().clearCard();
   },
   resolvePayday: (playerId, previousPosition = 0, stepsMoved = 0) => {
@@ -1505,6 +1537,12 @@ export const useGameStore = create<GameStore>((set, get) => {
                   shortfall: financing.shortfall,
                   track: target.track
                 };
+                if (target.track === "fastTrack") {
+                  target.status = "bankrupt";
+                  if (draft.players.every((player) => player.status === "bankrupt")) {
+                    draft.phase = "finished";
+                  }
+                }
               } else {
                 if (financing.loan) bankLoans.push(financing.loan);
                 target.cash -= fastPenalty;
@@ -1570,11 +1608,21 @@ export const useGameStore = create<GameStore>((set, get) => {
         payload.shortfall = paymentFailure.shortfall;
         payload.track = paymentFailure.track;
       }
+      if (resolvedPlayer.status === "bankrupt") {
+        payload.bankrupt = true;
+      }
       if (visitedFastDream && resolvedPlayer && hasReachedFastTrackGoal(resolvedPlayer)) {
         dreamWin = true;
         payload.dreamAchieved = true;
       }
       state.addLog(paymentFailure?.logKey ?? `log.board.${boardEntry.type.toLowerCase()}`, payload, playerId);
+      if (resolvedPlayer.status === "bankrupt") {
+        state.addLog(
+          "log.fastTrack.bankrupt",
+          { required: paymentFailure?.required, cashAvailable: paymentFailure?.cashAvailable, shortfall: paymentFailure?.shortfall },
+          playerId
+        );
+      }
       if (bankLoans.length > 0) {
         bankLoans.forEach((loan) => state.addLog("log.bank.loanIssued", { principal: loan.principal, payment: loan.payment }, playerId));
       }

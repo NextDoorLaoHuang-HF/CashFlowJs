@@ -65,6 +65,7 @@ export type Player = {
   llmPersona?: string;
   fastTrackUnlocked: boolean;
   fastTrackTarget?: number;
+  status: "active" | "bankrupt";
   track: PlayerTrack;
 };
 
