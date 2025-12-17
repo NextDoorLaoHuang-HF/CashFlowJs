@@ -55,7 +55,7 @@
 ### 1.9 破产/出局机制（是否 Game Over、可卖哪些资产、折价口径）？
 - **Rat Race：不设置强制 Game Over**（银行贷款可覆盖强制支出，避免软锁）。  
 - **Fast Track：无银行贷款**。若遇到强制支付且现金不足：  
-  1) 允许卖出外圈资产筹资（若实现了外圈资产）  
+  1) 进入“资产清算窗口”，允许按第 6.6 节的折价口径卖出外圈资产筹资  
   2) 若仍不足，则该玩家**破产出局**（多人）/ **游戏失败**（单人）。
 
 ---
@@ -283,6 +283,50 @@
   2) 玩家到达 `FAST_DREAM`（或实现为“到达 DREAM 格并完成支付/判定”）  
 - 达成后进入 `Finished`。
 
+### 6.6 外圈现金不足：资产清算（Fire Sale）与破产出局（v1.0）
+
+> 目的：外圈禁止银行贷款，但仍可能遇到强制支付事件。v1.0 要求提供一套可复盘的“卖资产筹资 → 不足则出局”流程，避免直接判负造成体验割裂。
+
+#### 6.6.1 触发条件（仅强制支付）
+- 仅当规则层要求玩家**必须支付固定金额**（`requiredCash`）且 `cash < requiredCash` 时触发清算窗口。  
+- 不适用于可选行为：Buy/Pass、Donate/Skip 等（可选行为现金不足时直接视为无法执行/自动跳过，不进入清算窗口）。
+
+#### 6.6.2 可卖范围（Sellable）
+- 仅限玩家 `track="fastTrack"` 时其 `assets` 中的外圈资产条目。  
+- 不区分类别：`stock/realEstate/business/collectible/other` 均可清算。  
+- 数量规则：
+  - 若资产有 `quantity`：允许卖出 `sellQty ∈ [1, quantity]`（可分批卖）。  
+  - 若资产无 `quantity`：视为 `quantity = 1`，只能整项卖出。
+
+#### 6.6.3 估值口径（Liquidation Value）
+- 外圈清算不依赖市场牌；采用统一折价：`liquidationRate = 0.5`。  
+- 对任意资产，令 `totalQty = max(1, floor(quantity))`，玩家选择卖出 `sellQty`，则：
+  - **成本分摊**：`soldCost = round(asset.cost * (sellQty / totalQty))`  
+  - **现金流分摊**：`soldCashflow = round(asset.cashflow * (sellQty / totalQty))`  
+  - **清算到手现金**：`proceeds = max(round(soldCost * liquidationRate), 0)`  
+- 结算影响：
+  - `cash += proceeds`  
+  - `passiveIncome -= soldCashflow`（并重算 `totalIncome/payday`）  
+  - 资产更新：
+    - 若 `sellQty == totalQty`：移除该资产条目  
+    - 否则：`quantity -= sellQty`，`cost -= soldCost`，`cashflow -= soldCashflow`（允许因 round 产生 ±1 的拆分误差；最终值以日志为准，必须可复盘）
+
+#### 6.6.4 结算与日志顺序（必须可复盘）
+
+当发生“强制支付且现金不足”时，结算顺序固定为：
+
+1) **记录支付请求**：写入日志（原因/事件、`requiredCash`、`cashBefore`）。  
+2) **进入清算窗口**：允许玩家多次选择“卖出哪些资产/卖出数量”（可一次性卖多项）。  
+3) **逐笔结算卖出**：每卖出一项就立刻更新 `cash/passiveIncome/assets` 并写入日志；日志必须包含：
+   - 被卖出的 `assetId/name/category`、`sellQty/totalQty`  
+   - `soldCost/soldCashflow/proceeds`  
+   - 卖出后的资产剩余（若未卖光：`remainingQty/remainingCost/remainingCashflow`）  
+   - `cashAfter/passiveIncomeAfter`  
+4) **再次尝试支付**：清算结束后若 `cash >= requiredCash`，扣款并写入“支付成功”日志；否则进入第 5 步。  
+5) **破产出局**：写入“支付失败/破产”日志（`requiredCash/cashAvailable/shortfall`），并将该玩家标记为破产：
+   - 多人：该玩家后续回合被跳过，直到游戏结束  
+   - 单人：直接判定游戏失败并进入 `Finished`
+
 ---
 
 ## 7. 规则开关（Settings）口径
@@ -310,7 +354,7 @@
 4) `[x]` **银行贷款还款**：支持按 1000 为步长还本金，并按 `payment = round(balance * 0.1)` 自动重算月供。  
 5) `[x]` **Reverse Split 股数规则**：v1.0 口径为**向下取整**，保持整数股；拆/反拆股仅改变股数不改变现金。  
 6) `[~]` **Fast Track 事件表**：已接入 `lib/data/fastTrackEvents.ts` 的事件表驱动与日志骨架（含 `eventId/legacyKey`）；已迁移旧版外圈机会格/IPO/doodad；仍需补齐剩余旧版 Dream 等分支细节，并对照 `docs/legacy-logic-audit.md` 修复旧 bug。  
-7) `[~]` **外圈现金不足处理**：当前现金不足直接破产出局；若引入外圈资产，应补齐“卖出资产筹资 → 不足则出局”的流程与 UI。  
+7) `[~]` **外圈现金不足处理**：v1.0 规则已在第 6.6 节定案；当前实现仍为“现金不足直接破产出局”，需补齐资产清算交互/日志与结算（先卖出再判定出局）。  
 8) `[ ]` **Dream perk（可选）**：`lib/data/scenarios.ts` 已有 `perk` 文案，但未落地；若要实现必须定义触发时机与数值效果。
 
 ---

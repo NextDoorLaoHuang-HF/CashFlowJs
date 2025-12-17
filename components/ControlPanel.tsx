@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { t } from "../lib/i18n";
 import { translateCardText } from "../lib/cardTranslations";
 import { type DeckKey, useGameStore } from "../lib/state/gameStore";
@@ -49,7 +49,10 @@ export function ControlPanel() {
     board,
     fastTrackBoard,
     players,
-    enterFastTrack
+    enterFastTrack,
+    liquidationSession,
+    sellLiquidationAsset,
+    finalizeLiquidation
   } = useGameStore((state) => ({
     rollDice: state.rollDice,
     drawCard: state.drawCard,
@@ -74,10 +77,14 @@ export function ControlPanel() {
     board: state.board,
     fastTrackBoard: state.fastTrackBoard,
     players: state.players,
-    enterFastTrack: state.enterFastTrack
+    enterFastTrack: state.enterFastTrack,
+    liquidationSession: state.liquidationSession,
+    sellLiquidationAsset: state.sellLiquidationAsset,
+    finalizeLiquidation: state.finalizeLiquidation
   }));
 
   const currentPlayer = useMemo(() => players.find((player) => player.id === currentPlayerId), [players, currentPlayerId]);
+  const [liquidationQuantities, setLiquidationQuantities] = useState<Record<string, number>>({});
   const currentSquare = useMemo(() => {
     if (!currentPlayer) return undefined;
     const trackSquares = currentPlayer.track === "fastTrack" ? fastTrackBoard : board;
@@ -254,7 +261,124 @@ export function ControlPanel() {
         <p style={{ margin: 0, fontSize: "0.85rem", color: "#f97316" }}>{t(settings.locale, "controls.draw.noDealsWarning")}</p>
       )}
 
-      {selectedCard ? (
+      {turnState === "awaitLiquidation" && liquidationSession && currentPlayer && liquidationSession.playerId === currentPlayer.id ? (
+        <div style={{ borderRadius: 12, border: "1px dashed rgba(255,255,255,0.2)", padding: "0.75rem", display: "grid", gap: "0.75rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.75rem", flexWrap: "wrap" }}>
+            <div>
+              <strong>{t(settings.locale, "liquidation.title")}</strong>
+              <div style={{ color: "var(--muted)", fontSize: "0.9rem" }}>{t(settings.locale, "liquidation.hint")}</div>
+            </div>
+            <div style={{ color: "var(--muted)", fontSize: "0.85rem" }}>{t(settings.locale, "liquidation.windowTitle")}</div>
+          </div>
+
+          <dl style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", margin: 0, gap: "0.35rem", fontSize: "0.85rem" }}>
+            <dt style={{ color: "var(--muted)" }}>{t(settings.locale, "liquidation.required")}</dt>
+            <dd style={{ margin: 0, textAlign: "right" }}>${liquidationSession.requiredCash.toLocaleString()}</dd>
+            <dt style={{ color: "var(--muted)" }}>{t(settings.locale, "liquidation.cash")}</dt>
+            <dd style={{ margin: 0, textAlign: "right" }}>${currentPlayer.cash.toLocaleString()}</dd>
+            <dt style={{ color: "var(--muted)" }}>{t(settings.locale, "liquidation.shortfall")}</dt>
+            <dd style={{ margin: 0, textAlign: "right" }}>
+              ${Math.max(liquidationSession.requiredCash - currentPlayer.cash, 0).toLocaleString()}
+            </dd>
+          </dl>
+
+          {currentPlayer.assets.length === 0 ? (
+            <div className="card" style={{ background: "rgba(255,255,255,0.02)" }}>
+              <div style={{ color: "var(--muted)", fontSize: "0.85rem" }}>{t(settings.locale, "liquidation.noAssets")}</div>
+            </div>
+          ) : (
+            <div className="card grid" style={{ background: "rgba(255,255,255,0.02)", gap: "0.6rem" }}>
+              {currentPlayer.assets.map((asset) => {
+                const available = getAssetAvailableQuantity(asset);
+                const currentValue = liquidationQuantities[asset.id] ?? Math.min(1, available);
+                const normalized = Math.min(Math.max(0, Math.floor(currentValue)), available);
+                const canSell = normalized > 0 && available > 0;
+                return (
+                  <div key={asset.id} className="grid" style={{ gap: "0.35rem" }}>
+                    <span style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem", flexWrap: "wrap" }}>
+                      <span>
+                        {asset.name}{" "}
+                        <span style={{ color: "var(--muted)" }}>
+                          · {t(settings.locale, "market.available")}: {available}
+                        </span>
+                      </span>
+                      <span style={{ color: "var(--muted)" }}>
+                        {t(settings.locale, "market.cashflow")}: ${asset.cashflow.toLocaleString()}
+                      </span>
+                    </span>
+                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                      <input
+                        type="number"
+                        min={0}
+                        max={available}
+                        step={1}
+                        value={normalized}
+                        onChange={(e) => {
+                          const raw = Math.floor(Number(e.target.value) || 0);
+                          setLiquidationQuantities((prev) => ({ ...prev, [asset.id]: raw }));
+                        }}
+                        style={{
+                          flex: 1,
+                          background: "rgba(255,255,255,0.05)",
+                          borderRadius: 8,
+                          border: "1px solid rgba(255,255,255,0.08)",
+                          padding: "0.5rem 0.75rem",
+                          color: "var(--text)"
+                        }}
+                      />
+                      <button
+                        onClick={() => sellLiquidationAsset(asset.id, normalized)}
+                        disabled={!canSell}
+                        style={{
+                          borderRadius: 10,
+                          padding: "0.5rem 0.75rem",
+                          background: canSell ? "rgba(248,113,113,0.18)" : "rgba(255,255,255,0.06)",
+                          color: canSell ? "#fff" : "rgba(255,255,255,0.35)",
+                          cursor: canSell ? "pointer" : "not-allowed",
+                          whiteSpace: "nowrap"
+                        }}
+                      >
+                        {t(settings.locale, "liquidation.sell")}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <button
+              onClick={finalizeLiquidation}
+              disabled={currentPlayer.cash < liquidationSession.requiredCash}
+              style={{
+                padding: "0.5rem 1rem",
+                borderRadius: 10,
+                flex: 1,
+                background: currentPlayer.cash >= liquidationSession.requiredCash ? "rgba(34,197,94,0.25)" : "rgba(255,255,255,0.06)",
+                color: currentPlayer.cash >= liquidationSession.requiredCash ? "#fff" : "rgba(255,255,255,0.35)",
+                cursor: currentPlayer.cash >= liquidationSession.requiredCash ? "pointer" : "not-allowed"
+              }}
+            >
+              {t(settings.locale, "liquidation.pay")}
+            </button>
+            <button
+              onClick={finalizeLiquidation}
+              disabled={currentPlayer.cash >= liquidationSession.requiredCash}
+              style={{
+                padding: "0.5rem 1rem",
+                borderRadius: 10,
+                flex: 1,
+                background: currentPlayer.cash < liquidationSession.requiredCash ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.06)",
+                color: currentPlayer.cash < liquidationSession.requiredCash ? "#fff" : "rgba(255,255,255,0.35)",
+                cursor: currentPlayer.cash < liquidationSession.requiredCash ? "pointer" : "not-allowed"
+              }}
+            >
+              {t(settings.locale, "liquidation.bankrupt")}
+            </button>
+          </div>
+        </div>
+      ) : selectedCard ? (
         turnState === "awaitMarket" ? (
           <div style={{ borderRadius: 12, border: "1px dashed rgba(255,255,255,0.2)", padding: "0.75rem", display: "grid", gap: "0.75rem" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.75rem", flexWrap: "wrap" }}>

@@ -74,6 +74,19 @@ type MarketSession = {
   buyQuantity: number;
 };
 
+type LiquidationSessionReason = {
+  kind: "fastTrackPenalty";
+  eventId?: string;
+  legacyKey?: string;
+  squareId?: number;
+};
+
+type LiquidationSession = {
+  playerId: string;
+  requiredCash: number;
+  reason: LiquidationSessionReason;
+};
+
 type GameStore = {
   phase: GamePhase;
   board: typeof boardSquares;
@@ -87,6 +100,7 @@ type GameStore = {
   discard: Record<DeckKey, BaseCard[]>;
   selectedCard?: BaseCard;
   marketSession?: MarketSession;
+  liquidationSession?: LiquidationSession;
   dice?: DiceRoll;
   turn: number;
   logs: GameLogEntry[];
@@ -125,6 +139,8 @@ type GameStore = {
   donateCharity: () => void;
   skipCharity: () => void;
   enterFastTrack: (playerId: string) => void;
+  sellLiquidationAsset: (assetId: string, quantity: number) => void;
+  finalizeLiquidation: () => void;
 };
 
 const defaultSettings: GameSettings = {
@@ -762,9 +778,10 @@ export const useGameStore = create<GameStore>((set, get) => {
           return;
         }
 
-        discardSelectedCard(draft);
-        draft.charityPrompt = undefined;
-        draft.dice = undefined;
+	        discardSelectedCard(draft);
+	        draft.charityPrompt = undefined;
+	        draft.liquidationSession = undefined;
+	        draft.dice = undefined;
 
 	        draft.currentPlayerId = draft.players[nextIndex].id;
 	        if (wrapped) {
@@ -789,13 +806,14 @@ export const useGameStore = create<GameStore>((set, get) => {
       if (!currentPlayer) return;
 
       set(
-        produce<GameStore>((draft) => {
-          draft.dice = undefined;
-          discardSelectedCard(draft);
-          draft.charityPrompt = undefined;
-          draft.turnState = "awaitRoll";
-        })
-      );
+	        produce<GameStore>((draft) => {
+	          draft.dice = undefined;
+	          discardSelectedCard(draft);
+	          draft.charityPrompt = undefined;
+	          draft.liquidationSession = undefined;
+	          draft.turnState = "awaitRoll";
+	        })
+	      );
 
       if (currentPlayer.skipTurns <= 0) {
         return;
@@ -836,10 +854,11 @@ export const useGameStore = create<GameStore>((set, get) => {
       offers: [],
       doodads: []
 		    },
-		    selectedCard: undefined,
-		    marketSession: undefined,
-		    dice: undefined,
-		    turn: 1,
+			    selectedCard: undefined,
+			    marketSession: undefined,
+			    liquidationSession: undefined,
+			    dice: undefined,
+			    turn: 1,
 	    logs: [],
 	    replayFrames: [],
 	    ventures: [],
@@ -863,10 +882,11 @@ export const useGameStore = create<GameStore>((set, get) => {
 		        state.turn = 1;
 		        state.logs = [];
 		        state.replayFrames = [];
-		        state.selectedCard = undefined;
-		        state.marketSession = undefined;
-		        state.dice = undefined;
-		        state.charityPrompt = undefined;
+			        state.selectedCard = undefined;
+			        state.marketSession = undefined;
+			        state.liquidationSession = undefined;
+			        state.dice = undefined;
+			        state.charityPrompt = undefined;
         state.turnState = "awaitRoll";
         state.rngSeed = rngSeed;
         let rngState = rngSeed;
@@ -2084,6 +2104,7 @@ export const useGameStore = create<GameStore>((set, get) => {
     let fastTrackPaydayPerHit: number | undefined;
     let passiveBoost: number | undefined;
     let fastPenalty: number | undefined;
+    let liquidationTrigger: { required: number; cashAvailable: number; shortfall: number } | undefined;
     let fastTrackDoodadOutcome: Record<string, unknown> | undefined;
     let visitedFastDream = false;
     let dreamWin = false;
@@ -2249,21 +2270,26 @@ export const useGameStore = create<GameStore>((set, get) => {
               fastPenalty = Math.max(target.totalExpenses, minPenalty);
               const cashAvailable = target.cash;
               if (cashAvailable < fastPenalty) {
-                paymentFailure = {
-                  logKey: "log.board.fast_penalty.failed",
+                liquidationTrigger = {
                   required: fastPenalty,
                   cashAvailable,
-                  shortfall: fastPenalty - cashAvailable,
-                  track: target.track
+                  shortfall: fastPenalty - cashAvailable
                 };
-                target.status = "bankrupt";
-                if (draft.players.every((player) => player.status === "bankrupt")) {
-                  draft.phase = "finished";
-                }
+                draft.liquidationSession = {
+                  playerId,
+                  requiredCash: fastPenalty,
+                  reason: {
+                    kind: "fastTrackPenalty",
+                    eventId: typeof event?.id === "string" ? event.id : undefined,
+                    legacyKey: typeof event?.legacyKey === "string" ? event.legacyKey : undefined,
+                    squareId: typeof boardEntry.id === "number" ? boardEntry.id : undefined
+                  }
+                };
+                draft.turnState = "awaitLiquidation";
               } else {
                 target.cash -= fastPenalty;
+                draft.turnState = "awaitEnd";
               }
-              draft.turnState = "awaitEnd";
               break;
             }
             case "doodad": {
@@ -2493,6 +2519,12 @@ export const useGameStore = create<GameStore>((set, get) => {
       if (fastPenalty) {
         payload.fastPenalty = fastPenalty;
       }
+      if (liquidationTrigger) {
+        payload.liquidationRequired = true;
+        payload.paymentRequired = liquidationTrigger.required;
+        payload.cashAvailable = liquidationTrigger.cashAvailable;
+        payload.shortfall = liquidationTrigger.shortfall;
+      }
       if (fastTrackDoodadOutcome) {
         payload.fastTrackDoodad = fastTrackDoodadOutcome;
       }
@@ -2531,7 +2563,13 @@ export const useGameStore = create<GameStore>((set, get) => {
     const state = get();
     if (state.phase === "setup" || state.phase === "finished") return;
     if (!state.currentPlayerId || state.players.length === 0) return;
-    if (state.turnState === "awaitRoll" || state.turnState === "awaitAction" || state.turnState === "awaitCard" || state.turnState === "awaitMarket") {
+    if (
+      state.turnState === "awaitRoll" ||
+      state.turnState === "awaitAction" ||
+      state.turnState === "awaitCard" ||
+      state.turnState === "awaitMarket" ||
+      state.turnState === "awaitLiquidation"
+    ) {
       return;
     }
     if (state.charityPrompt && state.charityPrompt.playerId === state.currentPlayerId) {
@@ -2729,7 +2767,14 @@ export const useGameStore = create<GameStore>((set, get) => {
   enterFastTrack: (playerId) => {
     const state = get();
     if (state.currentPlayerId !== playerId) return;
-    if (state.turnState === "awaitRoll" || state.turnState === "awaitCard" || state.turnState === "awaitMarket" || state.turnState === "awaitCharity") return;
+    if (
+      state.turnState === "awaitRoll" ||
+      state.turnState === "awaitCard" ||
+      state.turnState === "awaitMarket" ||
+      state.turnState === "awaitCharity" ||
+      state.turnState === "awaitLiquidation"
+    )
+      return;
 
     let entered = false;
     set(
@@ -2797,6 +2842,173 @@ export const useGameStore = create<GameStore>((set, get) => {
     if (!prompt) return;
     set({ charityPrompt: undefined, turnState: "awaitEnd" });
     state.addLog("log.charity.skipped", { amount: prompt.amount }, prompt.playerId);
+  },
+  sellLiquidationAsset: (assetId, quantity) => {
+    const state = get();
+    if (state.turnState !== "awaitLiquidation") return;
+    const session = state.liquidationSession;
+    if (!session) return;
+
+    const playerId = session.playerId;
+    const requiredCash = session.requiredCash;
+
+    let salePayload: Record<string, unknown> | null = null;
+
+    set(
+      produce<GameStore>((draft) => {
+        if (draft.turnState !== "awaitLiquidation") return;
+        const draftSession = draft.liquidationSession;
+        if (!draftSession) return;
+        if (draftSession.playerId !== playerId) return;
+
+        const player = draft.players.find((p) => p.id === playerId);
+        if (!player || player.track !== "fastTrack") return;
+
+        const assetIndex = player.assets.findIndex((asset) => asset.id === assetId);
+        if (assetIndex < 0) return;
+        const asset = player.assets[assetIndex];
+        if (!asset) return;
+
+        const totalQty = getAssetAvailableQuantity(asset);
+        const rawQty = typeof quantity === "number" ? quantity : Number(quantity);
+        if (!Number.isFinite(rawQty)) return;
+        const sellQty = Math.min(Math.max(1, Math.floor(rawQty)), totalQty);
+        if (sellQty <= 0) return;
+
+        const fraction = totalQty > 0 ? sellQty / totalQty : 1;
+        const soldCost = Math.round(asset.cost * fraction);
+        const soldCashflow = Math.round(asset.cashflow * fraction);
+        const liquidationRate = 0.5;
+        const proceeds = Math.max(Math.round(soldCost * liquidationRate), 0);
+
+        const cashBefore = player.cash;
+        const passiveBefore = player.passiveIncome;
+
+        player.cash += proceeds;
+        player.passiveIncome -= soldCashflow;
+
+        const remainingQty = totalQty - sellQty;
+        if (remainingQty <= 0 || totalQty === 1) {
+          player.assets.splice(assetIndex, 1);
+        } else {
+          player.assets[assetIndex] = {
+            ...asset,
+            quantity: remainingQty,
+            cost: asset.cost - soldCost,
+            cashflow: asset.cashflow - soldCashflow
+          };
+        }
+
+        recalcPlayerIncome(player);
+
+        const updatedAsset = remainingQty > 0 ? player.assets.find((candidate) => candidate.id === assetId) : undefined;
+        salePayload = {
+          requiredCash,
+          asset: { id: asset.id, name: asset.name, category: asset.category },
+          sellQty,
+          totalQty,
+          soldCost,
+          soldCashflow,
+          liquidationRate,
+          proceeds,
+          remaining:
+            updatedAsset && remainingQty > 0
+              ? {
+                  qty: remainingQty,
+                  cost: updatedAsset.cost,
+                  cashflow: updatedAsset.cashflow
+                }
+              : null,
+          cashBefore,
+          cashAfter: player.cash,
+          passiveIncomeBefore: passiveBefore,
+          passiveIncomeAfter: player.passiveIncome
+        };
+      })
+    );
+
+    if (salePayload) {
+      get().addLog("log.fastTrack.liquidation.assetSold", salePayload, playerId);
+    }
+  },
+  finalizeLiquidation: () => {
+    const state = get();
+    if (state.turnState !== "awaitLiquidation") return;
+    const session = state.liquidationSession;
+    if (!session) return;
+
+    const playerId = session.playerId;
+    const requiredCash = session.requiredCash;
+
+    let settled:
+      | { ok: true; cashBefore: number; cashAfter: number; requiredCash: number; reason: LiquidationSessionReason }
+      | { ok: false; requiredCash: number; cashAvailable: number; shortfall: number; track: Player["track"]; reason: LiquidationSessionReason }
+      | null = null;
+
+    set(
+      produce<GameStore>((draft) => {
+        if (draft.turnState !== "awaitLiquidation") return;
+        const draftSession = draft.liquidationSession;
+        if (!draftSession) return;
+        if (draftSession.playerId !== playerId) return;
+
+        const player = draft.players.find((p) => p.id === playerId);
+        if (!player || player.track !== "fastTrack") return;
+
+        const cashBefore = player.cash;
+        if (cashBefore >= requiredCash) {
+          player.cash -= requiredCash;
+          settled = { ok: true, cashBefore, cashAfter: player.cash, requiredCash, reason: draftSession.reason };
+          draft.liquidationSession = undefined;
+          draft.turnState = "awaitEnd";
+          return;
+        }
+
+        const shortfall = requiredCash - cashBefore;
+        settled = {
+          ok: false,
+          requiredCash,
+          cashAvailable: cashBefore,
+          shortfall,
+          track: player.track,
+          reason: draftSession.reason
+        };
+
+        player.status = "bankrupt";
+        draft.liquidationSession = undefined;
+        draft.turnState = "awaitEnd";
+        if (draft.players.every((p) => p.status === "bankrupt")) {
+          draft.phase = "finished";
+        }
+      })
+    );
+
+    if (!settled) return;
+    if (settled.ok) {
+      get().addLog(
+        "log.fastTrack.liquidation.paymentCompleted",
+        { requiredCash: settled.requiredCash, cashBefore: settled.cashBefore, cashAfter: settled.cashAfter, reason: settled.reason },
+        playerId
+      );
+      return;
+    }
+
+    get().addLog(
+      "log.fastTrack.liquidation.paymentFailed",
+      {
+        requiredCash: settled.requiredCash,
+        cashAvailable: settled.cashAvailable,
+        shortfall: settled.shortfall,
+        reason: settled.reason,
+        track: settled.track
+      },
+      playerId
+    );
+    get().addLog(
+      "log.fastTrack.bankrupt",
+      { required: settled.requiredCash, cashAvailable: settled.cashAvailable, shortfall: settled.shortfall },
+      playerId
+    );
   }
   };
 });
