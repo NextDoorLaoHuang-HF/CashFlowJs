@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo } from "react";
 import type { GamePhase } from "../lib/types";
+import type { GameReplayExportV1 } from "../lib/types";
 import { useGameStore } from "../lib/state/gameStore";
 import { t } from "../lib/i18n";
 
@@ -14,22 +15,29 @@ const phaseAccent: Record<GamePhase, string> = {
 };
 
 export function GameLog() {
-  const { logs, settings, players, clearLog } = useGameStore((state) => ({
+  const { logs, replayFrames, settings, players, clearLog } = useGameStore((state) => ({
     logs: state.logs,
+    replayFrames: state.replayFrames,
     settings: state.settings,
     players: state.players,
     clearLog: state.clearLog
   }));
 
   const handleExport = useCallback(() => {
-    const blob = new Blob([JSON.stringify(logs, null, 2)], { type: "application/json" });
+    const exportPayload: GameReplayExportV1 = {
+      format: "cashflowjs-replay-v1",
+      exportedAt: new Date().toISOString(),
+      logs,
+      frames: replayFrames
+    };
+    const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `cashflow-log-${Date.now()}.json`;
+    a.download = `cashflow-replay-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [logs]);
+  }, [logs, replayFrames]);
 
   const timeFormatter = useMemo(
     () =>

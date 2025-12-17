@@ -2,6 +2,8 @@
 
 import { useGameStore } from "../lib/state/gameStore";
 import { t } from "../lib/i18n";
+import { translateCardText } from "../lib/cardTranslations";
+import { getFastTrackEvent } from "../lib/data/fastTrackEvents";
 
 export function BoardGrid() {
   const { board, fastTrackBoard, players, currentPlayerId, settings } = useGameStore((state) => ({
@@ -54,6 +56,15 @@ export function BoardGrid() {
                 (player) => player.status !== "bankrupt" && player.track === section.track && player.position === square.id
               );
               const label = t(settings.locale, `board.square.${square.type.toLowerCase()}`);
+              const fastTrackEventTitle =
+                section.track === "fastTrack"
+                  ? (() => {
+                      const event = getFastTrackEvent(square.id);
+                      const params = event?.params;
+                      const title = params && typeof params === "object" ? (params as { title?: unknown }).title : undefined;
+                      return typeof title === "string" ? translateCardText(settings.locale, title) : undefined;
+                    })()
+                  : undefined;
               return (
                 <div
                   key={`${section.track}-${square.id}`}
@@ -71,6 +82,9 @@ export function BoardGrid() {
                     <strong style={{ fontSize: "0.85rem" }}>{label}</strong>
                     <span style={{ color: square.color }}>&#11044;</span>
                   </div>
+                  {fastTrackEventTitle && (
+                    <div style={{ fontSize: "0.75rem", lineHeight: 1.25, color: "var(--text)" }}>{fastTrackEventTitle}</div>
+                  )}
                   <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>#{square.id + 1}</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem" }}>
                     {occupants.map((player) => (

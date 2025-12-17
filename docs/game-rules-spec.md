@@ -265,12 +265,16 @@
 
 ### 6.4 外圈格子类型（v1.0）
 
-> 当前重构版数据使用 `lib/data/board.ts` 的 FAST_* 类型；若未来要移植旧版 fasttrack 详细格事件，可在 v1.x 扩展为数据驱动事件表。
+> v1.0 已引入外圈事件表：`lib/data/fastTrackEvents.ts`。v1.x 已迁移旧版 fasttrack 的逐格事件（固定机会格 / IPO 掷骰 / 外圈 doodad），并持续扩展事件表与引擎以对齐旧版与修复旧 bug。
 
 - `FAST_PAYDAY`：经过时发放 `payday`。  
-- `FAST_OPPORTUNITY`：自动提升被动收入：`passiveBoost = max(2000, round(payday * 0.5))`，并令 `passiveIncome += passiveBoost`。  
+- `FAST_OPPORTUNITY`：由事件表驱动（v1.x 迁移中可能存在多种分支）：
+  - `passiveBoost`（v1.0 兼容）：自动提升被动收入：`passiveBoost = max(2000, round(payday * 0.5))`，并令 `passiveIncome += passiveBoost`。  
+  - `investment`（v1.x legacy 迁移）：弹出投资机会卡，玩家可 Buy/Pass；Buy 时支付 `cost` 并令 `passiveIncome += cashFlow`；外圈禁止银行贷款，现金不足只能 Pass。  
 - `FAST_DONATION`：弹出慈善提示，金额：`donation = max(round(totalIncome * 0.2), 5000)`；Donate 成功则 `charityTurns=3`。  
-- `FAST_PENALTY`：强制支出：`penalty = max(totalExpenses, 3000)`；无银行贷款；现金不足按 1.9 处理。  
+- `FAST_PENALTY`：由事件表驱动（v1.x 迁移中可能存在多种分支）：
+  - `penalty`（v1.0 兼容）：强制支出：`penalty = max(totalExpenses, 3000)`；无银行贷款；现金不足按 1.9 处理。  
+  - `doodad`（v1.x legacy 迁移）：外圈突发事件（如“失去一半现金/医疗/坏合伙人/维修”），按事件表参数结算并写入日志。  
 - `FAST_DREAM`：若 `passiveIncome >= fastTrackTarget`，则立即胜利（进入 Finished），否则仅记录一次“Dream Shot”事件。
 
 ### 6.5 胜利条件（v1.0）
@@ -298,14 +302,16 @@
 
 > 这里列出的内容，是为了把“文档承诺的规则”落到代码与 UI 的具体工作项，避免开发各自实现。
 
-1) **资产/负债报表 UI**：展示持仓、房产、企业、负债余额与月供；支持选择出售/还款。  
-2) **Offer/Stock 的全员响应窗口**：按 5.3.3、5.4 实现多人卖出交互与结算顺序。  
-3) **Offer 的“选择卖出哪一项资产”**：至少支持当前玩家选择卖出条目；避免“自动卖出全部”。  
-4) **银行贷款还款**：已支持按 1000 为步长还本金，并按 `payment = round(balance * 0.1)` 自动重算月供。  
-5) **Reverse Split 股数规则**：明确向下取整/必须偶数/禁止拆分小数股，并在 UI 校验。  
-6) **Fast Track 事件表**：若要与旧版一致，应把 `legacy/js/fasttrack.js` 的格子与事件数据化，并修复旧 bug。  
-7) **外圈现金不足处理**：强制费用无法支付时的资产清算/出局规则落地。  
-8) **Dream perk（可选）**：`lib/data/scenarios.ts` 已有 `perk` 文案，但未落地；若要实现必须定义触发时机与数值效果。
+> 状态约定：`[ ]` 未完成；`[x]` 已完成；`[~]` 部分完成（仍需补交互/日志/边界）。
+
+1) `[~]` **资产/负债报表 UI**：已提供资产/负债面板（含银行贷款/玩家借款还款入口）；若需要“主动清算/卖出”则必须先在规则层定义折价与可卖范围。  
+2) `[x]` **Offer/Stock 的全员响应窗口**：按回合顺序逐人确认；卖出选择与买入数量写入日志，可复盘。  
+3) `[x]` **Offer 的“选择卖出哪一项资产”**：Market 窗口按资产条目与数量选择，避免“自动卖出全部”。  
+4) `[x]` **银行贷款还款**：支持按 1000 为步长还本金，并按 `payment = round(balance * 0.1)` 自动重算月供。  
+5) `[x]` **Reverse Split 股数规则**：v1.0 口径为**向下取整**，保持整数股；拆/反拆股仅改变股数不改变现金。  
+6) `[~]` **Fast Track 事件表**：已接入 `lib/data/fastTrackEvents.ts` 的事件表驱动与日志骨架（含 `eventId/legacyKey`）；已迁移旧版外圈机会格/IPO/doodad；仍需补齐剩余旧版 Dream 等分支细节，并对照 `docs/legacy-logic-audit.md` 修复旧 bug。  
+7) `[~]` **外圈现金不足处理**：当前现金不足直接破产出局；若引入外圈资产，应补齐“卖出资产筹资 → 不足则出局”的流程与 UI。  
+8) `[ ]` **Dream perk（可选）**：`lib/data/scenarios.ts` 已有 `perk` 文案，但未落地；若要实现必须定义触发时机与数值效果。
 
 ---
 

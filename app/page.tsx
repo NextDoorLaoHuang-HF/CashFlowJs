@@ -1,7 +1,6 @@
 "use client";
 
 import { BoardGrid } from "../components/BoardGrid";
-import { BankLoansPanel } from "../components/BankLoansPanel";
 import { ControlPanel } from "../components/ControlPanel";
 import { GameLog } from "../components/GameLog";
 import { JointVenturesPanel } from "../components/JointVenturesPanel";
@@ -9,6 +8,8 @@ import { LLMPanel } from "../components/LLMPanel";
 import { LocalizationToggle } from "../components/LocalizationToggle";
 import { LoansPanel } from "../components/LoansPanel";
 import { PlayerSidebar } from "../components/PlayerSidebar";
+import { PortfolioPanel } from "../components/PortfolioPanel";
+import { ReplayPanel } from "../components/ReplayPanel";
 import { SetupWizard } from "../components/SetupWizard";
 import { useGameStore } from "../lib/state/gameStore";
 import { t } from "../lib/i18n";
@@ -32,11 +33,14 @@ export default function Page() {
       </header>
 
       {phase === "setup" || players.length === 0 ? (
-        <SetupWizard
-          locale={settings.locale}
-          initialSettings={settings}
-          onStart={(configuredPlayers, configuredSettings) => initGame({ players: configuredPlayers, settings: configuredSettings })}
-        />
+        <div className="grid" style={{ gap: "1.25rem" }}>
+          <SetupWizard
+            locale={settings.locale}
+            initialSettings={settings}
+            onStart={(configuredPlayers, configuredSettings) => initGame({ players: configuredPlayers, settings: configuredSettings })}
+          />
+          <ReplayPanel />
+        </div>
       ) : (
         <div className="grid dashboard" style={{ gridTemplateColumns: "2.1fr 0.9fr", gap: "1.25rem" }}>
           <div className="grid" style={{ gap: "1.25rem" }}>
@@ -46,10 +50,11 @@ export default function Page() {
           </div>
           <div className="grid" style={{ gap: "1.25rem" }}>
             <PlayerSidebar />
-            <BankLoansPanel />
+            <PortfolioPanel />
             <JointVenturesPanel />
             <LoansPanel />
             <LLMPanel />
+            <ReplayPanel />
           </div>
         </div>
       )}

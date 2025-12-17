@@ -122,6 +122,24 @@ export type GameLogEntry = {
   payload?: Record<string, unknown>;
 };
 
+export type GameReplayFrame = {
+  logId: string;
+  turn: number;
+  phase: GamePhase;
+  timestamp: string;
+  currentPlayerId: string | null;
+  players: Player[];
+  loans: PlayerLoan[];
+  ventures: JointVenture[];
+};
+
+export type GameReplayExportV1 = {
+  format: "cashflowjs-replay-v1";
+  exportedAt: string;
+  logs: GameLogEntry[];
+  frames: GameReplayFrame[];
+};
+
 export type GameSettings = {
   locale: Locale;
   startingSavingsMode: "none" | "normal" | "salary" | "double-salary";

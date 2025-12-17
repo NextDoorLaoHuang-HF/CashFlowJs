@@ -4,6 +4,7 @@ import { v4 as uuid } from "uuid";
 import { boardSquares, fastTrackSquares } from "../data/board";
 import { cards } from "../data/cards";
 import { dreams, scenarios } from "../data/scenarios";
+import { getFastTrackEvent } from "../data/fastTrackEvents";
 import { t } from "../i18n";
 import {
   cardMentionsEveryone,
@@ -16,21 +17,22 @@ import {
   isTradeableSecurityCard,
   matchesOffer
 } from "./marketRules";
-import type {
-  Asset,
-  BaseCard,
-  CharityPrompt,
-  DiceRoll,
-  GameLogEntry,
-  GamePhase,
-  GameSettings,
-  JointVenture,
-  LLMAction,
-  Locale,
-  Player,
-  PlayerLoan,
-  TurnState
-} from "../types";
+	import type {
+	  Asset,
+	  BaseCard,
+	  CharityPrompt,
+	  DiceRoll,
+	  GameLogEntry,
+	  GameReplayFrame,
+	  GamePhase,
+	  GameSettings,
+	  JointVenture,
+	  LLMAction,
+	  Locale,
+	  Player,
+	  PlayerLoan,
+	  TurnState
+	} from "../types";
 
 export type DeckKey = "smallDeals" | "bigDeals" | "offers" | "doodads";
 
@@ -61,6 +63,17 @@ type MarketResolution = {
   sell?: Record<string, Record<string, number>>;
 };
 
+type MarketSessionStage = "sell" | "buy";
+
+type MarketSession = {
+  cardId: string;
+  stage: MarketSessionStage;
+  responders: string[];
+  responderIndex: number;
+  sell: Record<string, Record<string, number>>;
+  buyQuantity: number;
+};
+
 type GameStore = {
   phase: GamePhase;
   board: typeof boardSquares;
@@ -68,12 +81,16 @@ type GameStore = {
   players: Player[];
   currentPlayerId: string | null;
   turnState: TurnState;
+  rngSeed: number;
+  rngState: number;
   decks: Record<DeckKey, BaseCard[]>;
   discard: Record<DeckKey, BaseCard[]>;
   selectedCard?: BaseCard;
+  marketSession?: MarketSession;
   dice?: DiceRoll;
   turn: number;
   logs: GameLogEntry[];
+  replayFrames: GameReplayFrame[];
   ventures: JointVenture[];
   loans: PlayerLoan[];
   settings: GameSettings;
@@ -86,6 +103,11 @@ type GameStore = {
   applySelectedCard: () => void;
   passSelectedCard: () => void;
   resolveMarket: (payload?: MarketResolution) => void;
+  setMarketSellQuantity: (assetId: string, quantity: number) => void;
+  setMarketBuyQuantity: (quantity: number) => void;
+  confirmMarketStep: () => void;
+  skipMarketStep: () => void;
+  skipMarketAll: () => void;
   rollDice: () => void;
   drawCard: (deck: DeckKey) => void;
   clearCard: () => void;
@@ -159,15 +181,64 @@ const filterCardBySettings = (card: BaseCard, settings: GameSettings, deckKey: D
   return true;
 };
 
-const buildDeckFromSource = (deckKey: DeckKey, settings: GameSettings): BaseCard[] => {
+type ShuffledResult<T> = { list: T[]; rngState: number };
+
+const createRngSeed = (): number => (Date.now() % 2 ** 32) >>> 0;
+
+const nextRngFloat = (rngState: number): { value: number; rngState: number } => {
+  let nextState = (rngState + 0x6d2b79f5) | 0;
+  let t = nextState;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  const value = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  return { value, rngState: nextState >>> 0 };
+};
+
+const nextRngIntInclusive = (
+  rngState: number,
+  min: number,
+  max: number
+): {
+  value: number;
+  rngState: number;
+} => {
+  const safeMin = Number.isFinite(min) ? Math.ceil(min) : 0;
+  const safeMax = Number.isFinite(max) ? Math.floor(max) : safeMin;
+  const resolvedMin = Math.min(safeMin, safeMax);
+  const resolvedMax = Math.max(safeMin, safeMax);
+  const { value: floatValue, rngState: nextState } = nextRngFloat(rngState);
+  const span = resolvedMax - resolvedMin + 1;
+  const normalizedSpan = span > 0 ? span : 1;
+  const value = resolvedMin + Math.floor(floatValue * normalizedSpan);
+  return { value, rngState: nextState };
+};
+
+const shuffleWithRng = <T,>(list: T[], rngState: number): ShuffledResult<T> => {
+  const copy = [...list];
+  let state = rngState;
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const { value: index, rngState: nextState } = nextRngIntInclusive(state, 0, i);
+    state = nextState;
+    [copy[i], copy[index]] = [copy[index], copy[i]];
+  }
+  return { list: copy, rngState: state };
+};
+
+const buildDeckFromSource = (
+  deckKey: DeckKey,
+  settings: GameSettings,
+  rngState: number
+): { deck: BaseCard[]; rngState: number } => {
   if (deckKey === "smallDeals" && !settings.enableSmallDeals) {
-    return [];
+    return { deck: [], rngState };
   }
   if (deckKey === "bigDeals" && !settings.enableBigDeals) {
-    return [];
+    return { deck: [], rngState };
   }
   const baseDeck = cloneDeck(deckSources[deckKey], deckKey);
-  return shuffle(baseDeck.filter((card) => filterCardBySettings(card, settings, deckKey)));
+  const filtered = baseDeck.filter((card) => filterCardBySettings(card, settings, deckKey));
+  const shuffled = shuffleWithRng(filtered, rngState);
+  return { deck: shuffled.list, rngState: shuffled.rngState };
 };
 
 const captureFastTrackStatus = (players: Player[]): Record<string, boolean> =>
@@ -212,23 +283,18 @@ const cloneDeck = (deck: Record<string, CardDefinition>, deckKey: DeckKey): Base
 
 const roundToNearestThousand = (value: number): number => Math.ceil(value / 1000) * 1000;
 
-const shuffle = <T,>(list: T[]): T[] => {
-  const copy = [...list];
-  for (let i = copy.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
-  }
-  return copy;
-};
-
 const discardSelectedCard = (draft: {
   selectedCard?: BaseCard;
+  marketSession?: MarketSession;
   discard: Record<DeckKey, BaseCard[]>;
 }) => {
   if (!draft.selectedCard) return;
-  const deckKey = (draft.selectedCard.deckKey ?? "smallDeals") as DeckKey;
-  draft.discard[deckKey].push(draft.selectedCard);
+  const deckKey = draft.selectedCard.deckKey;
+  if (deckKey === "smallDeals" || deckKey === "bigDeals" || deckKey === "offers" || deckKey === "doodads") {
+    draft.discard[deckKey].push(draft.selectedCard);
+  }
   draft.selectedCard = undefined;
+  draft.marketSession = undefined;
 };
 
 const drawCardForPlayer = (
@@ -236,6 +302,7 @@ const drawCardForPlayer = (
     decks: Record<DeckKey, BaseCard[]>;
     discard: Record<DeckKey, BaseCard[]>;
     settings: GameSettings;
+    rngState: number;
     selectedCard?: BaseCard;
   },
   deck: DeckKey,
@@ -245,8 +312,9 @@ const drawCardForPlayer = (
   let attempts = 0;
   while (attempts < maxAttempts) {
     if (draft.decks[deck].length === 0) {
-      const reshuffled = shuffle(draft.discard[deck]).filter((card) => filterCardBySettings(card, draft.settings, deck));
-      draft.decks[deck] = reshuffled;
+      const shuffled = shuffleWithRng(draft.discard[deck], draft.rngState);
+      draft.rngState = shuffled.rngState;
+      draft.decks[deck] = shuffled.list.filter((card) => filterCardBySettings(card, draft.settings, deck));
       draft.discard[deck] = [];
     }
     const card = draft.decks[deck].shift();
@@ -468,6 +536,90 @@ const calculateVisitedSquares = (start: number, steps: number, boardLength: numb
   return visited;
 };
 
+const buildTurnOrder = (players: Player[], startPlayerId: string): Player[] => {
+  const activePlayers = players.filter((player) => player.status !== "bankrupt");
+  const startIndex = activePlayers.findIndex((player) => player.id === startPlayerId);
+  if (startIndex < 0) {
+    return activePlayers;
+  }
+  return [...activePlayers.slice(startIndex), ...activePlayers.slice(0, startIndex)];
+};
+
+const ensureMarketSessionForSelectedCard = (draft: {
+  selectedCard?: BaseCard;
+  marketSession?: MarketSession;
+  players: Player[];
+  currentPlayerId: string | null;
+}) => {
+  const card = draft.selectedCard;
+  const currentPlayerId = draft.currentPlayerId;
+  if (!card || !currentPlayerId) {
+    draft.marketSession = undefined;
+    return;
+  }
+
+  const isOfferSell = card.deckKey === "offers" && isOfferSellCard(card);
+  const isSecurity = isTradeableSecurityCard(card);
+  if (!isOfferSell && !isSecurity) {
+    draft.marketSession = undefined;
+    return;
+  }
+
+  const responders = cardMentionsEveryone(card) ? buildTurnOrder(draft.players, currentPlayerId).map((player) => player.id) : [currentPlayerId];
+  if (responders.length === 0) {
+    draft.marketSession = undefined;
+    return;
+  }
+
+  draft.marketSession = {
+    cardId: card.id,
+    stage: "sell",
+    responders,
+    responderIndex: 0,
+    sell: {},
+    buyQuantity: 0
+  };
+};
+
+type MarketSellSelectionDetail = { assetId: string; name: string; quantity: number };
+
+const buildMarketSellSelectionDetails = (
+  player: Player,
+  card: BaseCard,
+  selections: Record<string, number>
+): MarketSellSelectionDetail[] => {
+  const entries: MarketSellSelectionDetail[] = [];
+  const normalizedSymbol = typeof card.symbol === "string" ? card.symbol.toLowerCase() : "";
+
+  Object.entries(selections).forEach(([assetId, requested]) => {
+    const raw = typeof requested === "number" ? requested : Number(requested);
+    if (!Number.isFinite(raw)) return;
+    const normalized = Math.floor(raw);
+    if (normalized <= 0) return;
+
+    const asset = player.assets.find((candidate) => candidate.id === assetId);
+    if (!asset) return;
+
+    if (card.deckKey === "offers") {
+      if (!matchesOffer(asset, card)) return;
+    } else if (isTradeableSecurityCard(card)) {
+      if (asset.category !== "stock") return;
+      const assetSymbol = asset.metadata?.symbol;
+      if (typeof assetSymbol !== "string" || assetSymbol.toLowerCase() !== normalizedSymbol) return;
+    } else {
+      return;
+    }
+
+    const available = getAssetAvailableQuantity(asset);
+    const quantity = Math.min(normalized, available);
+    if (quantity <= 0) return;
+
+    entries.push({ assetId, name: asset.name, quantity });
+  });
+
+  return entries;
+};
+
 const applyVentureCashflow = (players: Player[], venture: JointVenture, totalDelta: number) => {
   if (totalDelta === 0) {
     return;
@@ -482,6 +634,22 @@ const applyVentureCashflow = (players: Player[], venture: JointVenture, totalDel
     }
   });
 };
+
+const clonePlayerSnapshot = (player: Player): Player => ({
+  ...player,
+  assets: player.assets.map((asset) => ({ ...asset, metadata: asset.metadata ? { ...asset.metadata } : undefined })),
+  liabilities: player.liabilities.map((liability) => ({ ...liability, metadata: liability.metadata ? { ...liability.metadata } : undefined }))
+});
+
+const clonePlayersSnapshot = (players: Player[]): Player[] => players.map(clonePlayerSnapshot);
+
+const cloneLoansSnapshot = (loans: PlayerLoan[]): PlayerLoan[] => loans.map((loan) => ({ ...loan }));
+
+const cloneVenturesSnapshot = (ventures: JointVenture[]): JointVenture[] =>
+  ventures.map((venture) => ({
+    ...venture,
+    participants: venture.participants.map((participant) => ({ ...participant }))
+  }));
 
 const buildPlayer = (setup: SetupPlayer, settings: GameSettings): Player => {
   const scenario = scenarios.find((sc) => sc.id === setup.scenarioId) ?? scenarios[0];
@@ -598,15 +766,15 @@ export const useGameStore = create<GameStore>((set, get) => {
         draft.charityPrompt = undefined;
         draft.dice = undefined;
 
-        draft.currentPlayerId = draft.players[nextIndex].id;
-        if (wrapped) {
-          draft.turn += 1;
-        }
-        draft.turnState = "awaitRoll";
-        draft.history.push({ turn: draft.turn, players: draft.players.map((player) => ({ ...player })) });
-      })
-    );
-  };
+	        draft.currentPlayerId = draft.players[nextIndex].id;
+	        if (wrapped) {
+	          draft.turn += 1;
+	        }
+	        draft.turnState = "awaitRoll";
+	        draft.history.push({ turn: draft.turn, players: clonePlayersSnapshot(draft.players) });
+	      })
+	    );
+	  };
 
   const beginTurn = () => {
     const maxIterations = Math.max(1, get().players.length) * 10;
@@ -654,6 +822,8 @@ export const useGameStore = create<GameStore>((set, get) => {
     players: [],
     currentPlayerId: null,
     turnState: "awaitRoll",
+    rngSeed: 0,
+    rngState: 0,
     decks: {
       smallDeals: [],
       bigDeals: [],
@@ -665,16 +835,18 @@ export const useGameStore = create<GameStore>((set, get) => {
       bigDeals: [],
       offers: [],
       doodads: []
-    },
-    selectedCard: undefined,
-    dice: undefined,
-    turn: 1,
-    logs: [],
-    ventures: [],
-    loans: [],
-    settings: defaultSettings,
-    history: [],
-    charityPrompt: undefined,
+		    },
+		    selectedCard: undefined,
+		    marketSession: undefined,
+		    dice: undefined,
+		    turn: 1,
+	    logs: [],
+	    replayFrames: [],
+	    ventures: [],
+	    loans: [],
+	    settings: defaultSettings,
+	    history: [],
+	    charityPrompt: undefined,
     beginTurn,
     initGame: ({ players: playerSetups, settings }) => {
     const mergedSettings = { ...get().settings, ...settings };
@@ -682,76 +854,284 @@ export const useGameStore = create<GameStore>((set, get) => {
       throw new Error("Invalid game settings: at least one deal deck must remain enabled.");
     }
     const players = playerSetups.map((setup) => buildPlayer(setup, mergedSettings));
+    const rngSeed = createRngSeed();
     set(
       produce<GameStore>((state) => {
         state.players = players;
         state.currentPlayerId = players[0]?.id ?? null;
         state.phase = players.length > 0 ? "ratRace" : "setup";
-        state.turn = 1;
-        state.logs = [];
-        state.selectedCard = undefined;
-        state.dice = undefined;
-        state.charityPrompt = undefined;
+		        state.turn = 1;
+		        state.logs = [];
+		        state.replayFrames = [];
+		        state.selectedCard = undefined;
+		        state.marketSession = undefined;
+		        state.dice = undefined;
+		        state.charityPrompt = undefined;
         state.turnState = "awaitRoll";
-        state.decks.smallDeals = buildDeckFromSource("smallDeals", mergedSettings);
-        state.decks.bigDeals = buildDeckFromSource("bigDeals", mergedSettings);
-        state.decks.offers = buildDeckFromSource("offers", mergedSettings);
-        state.decks.doodads = buildDeckFromSource("doodads", mergedSettings);
+        state.rngSeed = rngSeed;
+        let rngState = rngSeed;
+        const smallDeals = buildDeckFromSource("smallDeals", mergedSettings, rngState);
+        state.decks.smallDeals = smallDeals.deck;
+        rngState = smallDeals.rngState;
+        const bigDeals = buildDeckFromSource("bigDeals", mergedSettings, rngState);
+        state.decks.bigDeals = bigDeals.deck;
+        rngState = bigDeals.rngState;
+        const offers = buildDeckFromSource("offers", mergedSettings, rngState);
+        state.decks.offers = offers.deck;
+        rngState = offers.rngState;
+        const doodads = buildDeckFromSource("doodads", mergedSettings, rngState);
+        state.decks.doodads = doodads.deck;
+        rngState = doodads.rngState;
+        state.rngState = rngState;
         state.discard = { smallDeals: [], bigDeals: [], offers: [], doodads: [] };
         state.settings = mergedSettings;
-        state.history = [{ turn: 1, players: players.map((p) => ({ ...p })) }];
+        state.history = [{ turn: 1, players: clonePlayersSnapshot(players) }];
       })
     );
-    get().addLog("log.gameInitialized");
-    get().beginTurn();
-  },
-  addLog: (message, payload, playerId) => {
-    const { settings, phase, turn, logs } = get();
-    const entry: GameLogEntry = {
-      id: uuid(),
-      message,
-      payload,
-      playerId,
-      phase,
-      turn,
-      timestamp: new Date().toISOString(),
-      localeMessage: t(settings.locale, message)
-    };
-    set({ logs: [...logs, entry] });
-  },
+	    const initialized = get();
+	    get().addLog("log.gameInitialized", {
+	      rngSeed: initialized.rngSeed,
+	      settings: initialized.settings,
+	      players: initialized.players.map((player) => ({
+	        id: player.id,
+	        name: player.name,
+	        color: player.color,
+	        scenarioId: player.scenario.id,
+	        dreamId: player.dream?.id,
+	        cash: player.cash,
+	        passiveIncome: player.passiveIncome,
+	        totalIncome: player.totalIncome,
+	        totalExpenses: player.totalExpenses,
+	        payday: player.payday,
+	        position: player.position,
+	        track: player.track,
+	        isLLM: player.isLLM
+	      })),
+	      decks: {
+	        smallDeals: initialized.decks.smallDeals.map((card) => card.id),
+	        bigDeals: initialized.decks.bigDeals.map((card) => card.id),
+	        offers: initialized.decks.offers.map((card) => card.id),
+	        doodads: initialized.decks.doodads.map((card) => card.id)
+	      }
+	    });
+	    get().beginTurn();
+	  },
+	  addLog: (message, payload, playerId) => {
+	    const snapshot = get();
+	    const { settings, phase, turn } = snapshot;
+	    const entry: GameLogEntry = {
+	      id: uuid(),
+	      message,
+	      payload,
+	      playerId,
+	      phase,
+	      turn,
+	      timestamp: new Date().toISOString(),
+	      localeMessage: t(settings.locale, message)
+	    };
+	    const frame: GameReplayFrame = {
+	      logId: entry.id,
+	      turn: entry.turn,
+	      phase: entry.phase,
+	      timestamp: entry.timestamp,
+	      currentPlayerId: snapshot.currentPlayerId,
+	      players: clonePlayersSnapshot(snapshot.players),
+	      loans: cloneLoansSnapshot(snapshot.loans),
+	      ventures: cloneVenturesSnapshot(snapshot.ventures)
+	    };
+	    set(
+	      produce<GameStore>((draft) => {
+	        draft.logs.push(entry);
+	        draft.replayFrames.push(frame);
+	      })
+	    );
+	  },
   getCardPreview: (card, playerId) => {
     const state = get();
     const resolvedPlayerId = playerId ?? state.currentPlayerId;
     const player = resolvedPlayerId ? state.players.find((p) => p.id === resolvedPlayerId) : undefined;
     return buildCardPreview(card, player);
   },
-  applySelectedCard: () => {
-    const state = get();
-    if (state.turnState !== "awaitCard") return;
-    if (!state.selectedCard) return;
+	  applySelectedCard: () => {
+	    const state = get();
+	    if (state.turnState !== "awaitCard") return;
+	    if (!state.selectedCard) return;
     const currentPlayerId = state.currentPlayerId;
     if (!currentPlayerId) return;
+    const player = state.players.find((p) => p.id === currentPlayerId);
+    if (!player) return;
+
     const preview = state.getCardPreview(state.selectedCard, currentPlayerId);
     const cashDelta = -preview.cost;
+
+    const fastTrackEvent = state.selectedCard.fastTrackEvent;
+	    if (player.track === "fastTrack" && fastTrackEvent && typeof fastTrackEvent === "object") {
+	      const kind = (fastTrackEvent as { kind?: unknown }).kind;
+	      if (kind === "rollPayout" || kind === "rollCashflow") {
+	        const cost = Math.max(0, preview.cost);
+	        const cashAvailable = player.cash;
+        if (cost > cashAvailable) {
+          state.addLog(
+            "log.deal.failed",
+            { cardId: state.selectedCard.id, deck: "fastTrack", cost, cashAvailable, shortfall: cost - cashAvailable, track: player.track },
+            currentPlayerId
+          );
+          return;
+        }
+
+	        let die = 1;
+	        const successFacesRaw = (fastTrackEvent as { successFaces?: unknown }).successFaces;
+	        const successFaces = Array.isArray(successFacesRaw)
+	          ? successFacesRaw.filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+	          : [];
+	        let success = false;
+
+	        const payout =
+	          kind === "rollPayout" && typeof (fastTrackEvent as { payout?: unknown }).payout === "number"
+	            ? (fastTrackEvent as { payout: number }).payout
+            : 0;
+        const successCashFlow =
+          kind === "rollCashflow" && typeof (fastTrackEvent as { successCashFlow?: unknown }).successCashFlow === "number"
+            ? (fastTrackEvent as { successCashFlow: number }).successCashFlow
+            : 0;
+        const failureCashFlow =
+          kind === "rollCashflow" && typeof (fastTrackEvent as { failureCashFlow?: unknown }).failureCashFlow === "number"
+            ? (fastTrackEvent as { failureCashFlow: number }).failureCashFlow
+            : 0;
+
+		        let recordedAsset: Asset | undefined;
+		        set(
+		          produce<GameStore>((draft) => {
+	            const rollResult = nextRngIntInclusive(draft.rngState, 1, 6);
+	            draft.rngState = rollResult.rngState;
+	            die = rollResult.value;
+	            success = successFaces.length > 0 ? successFaces.includes(die) : false;
+
+	            const target = draft.players.find((p) => p.id === currentPlayerId);
+		            if (!target) return;
+		            if (target.cash < cost) return;
+
+		            target.cash -= cost;
+		            const payoutAwardResolved = kind === "rollPayout" && success ? Math.max(0, Math.round(payout)) : 0;
+		            const cashflowAwardResolved =
+		              kind === "rollCashflow" ? Math.max(0, Math.round(success ? successCashFlow : failureCashFlow)) : 0;
+
+	            if (payoutAwardResolved > 0) {
+	              target.cash += payoutAwardResolved;
+	            }
+
+	            if (cashflowAwardResolved !== 0) {
+	              target.passiveIncome += cashflowAwardResolved;
+	            }
+
+	            const asset: Asset = {
+	              id: `${state.selectedCard?.id ?? "ft"}-${uuid()}`,
+	              name: state.selectedCard?.name ?? "Fast Track Opportunity",
+	              category: inferAssetCategory(state.selectedCard ?? { id: "ft", type: "Card", name: "Fast Track Opportunity", description: "" }),
+	              cashflow: cashflowAwardResolved,
+	              cost,
+	              metadata: {
+	                fastTrackEvent: fastTrackEvent,
+	                roll: die,
+	                success,
+	                payoutAward: payoutAwardResolved || undefined
+	              }
+	            };
+	            target.assets.push(asset);
+	            recordedAsset = asset;
+
+	            recalcPlayerIncome(target);
+            discardSelectedCard(draft);
+            if (draft.turnState === "awaitCard") {
+              draft.turnState = "awaitEnd";
+            }
+          })
+        );
+
+	        const eventId = (fastTrackEvent as { id?: unknown }).id;
+	        const legacyKey = (fastTrackEvent as { legacyKey?: unknown }).legacyKey;
+	        const squareId = (fastTrackEvent as { squareId?: unknown }).squareId;
+	        const payoutAwardResolved = kind === "rollPayout" && success ? Math.max(0, Math.round(payout)) : 0;
+	        const cashflowAwardResolved =
+	          kind === "rollCashflow" ? Math.max(0, Math.round(success ? successCashFlow : failureCashFlow)) : 0;
+	        state.addLog(
+	          "log.dealCompleted",
+	          {
+	            cardId: state.selectedCard.id,
+	            cashDelta: -cost + payoutAwardResolved,
+	            cashflowDelta: cashflowAwardResolved || undefined,
+	            assetCategory: recordedAsset?.category,
+	            assetCost: recordedAsset?.cost,
+	            fastTrackEvent,
+	            roll: { die, success, successFaces },
+	            payoutAward: payoutAwardResolved || undefined,
+	            cost,
+	            eventId: typeof eventId === "string" ? eventId : undefined,
+	            legacyKey: typeof legacyKey === "string" ? legacyKey : undefined,
+	            squareId: typeof squareId === "number" && Number.isFinite(squareId) ? squareId : undefined
+          },
+          currentPlayerId
+        );
+        return;
+      }
+    }
+
     state.completeDeal({ card: state.selectedCard, playerId: currentPlayerId, cashDelta, cashflowDelta: preview.cashflow });
   },
-  passSelectedCard: () => {
-    const state = get();
-    if (state.turnState !== "awaitCard") return;
-    if (!state.selectedCard) return;
+	  passSelectedCard: () => {
+	    const state = get();
+	    if (state.turnState !== "awaitCard") return;
+	    if (!state.selectedCard) return;
     const currentPlayerId = state.currentPlayerId;
     const preview = state.getCardPreview(state.selectedCard, currentPlayerId ?? undefined);
     if (!preview.canPass) {
       state.addLog("log.card.passDenied", { cardId: state.selectedCard.id, deck: state.selectedCard.deckKey }, currentPlayerId ?? undefined);
       return;
     }
-    state.clearCard();
-  },
-  resolveMarket: (payload) => {
-    const state = get();
-    if (state.turnState !== "awaitMarket") return;
-    if (!state.selectedCard) return;
-    if (!state.currentPlayerId) return;
+	    const currentPlayer = currentPlayerId ? state.players.find((player) => player.id === currentPlayerId) : undefined;
+	    let recordedPass = false;
+	    const fastTrackEvent = state.selectedCard.fastTrackEvent;
+	    if (currentPlayer?.track === "fastTrack" && fastTrackEvent && typeof fastTrackEvent === "object") {
+	      const eventId = (fastTrackEvent as { id?: unknown }).id;
+	      if (typeof eventId === "string") {
+	        const legacyKey = (fastTrackEvent as { legacyKey?: unknown }).legacyKey;
+	        const squareId = (fastTrackEvent as { squareId?: unknown }).squareId;
+	        state.addLog(
+	          "log.fastTrack.opportunity.skipped",
+	          {
+	            eventId,
+	            legacyKey: typeof legacyKey === "string" ? legacyKey : undefined,
+	            squareId: typeof squareId === "number" && Number.isFinite(squareId) ? squareId : undefined,
+	            title: state.selectedCard.name,
+	            cost: preview.cost,
+	            cashFlow: preview.cashflow
+	          },
+	          currentPlayerId ?? undefined
+	        );
+	        recordedPass = true;
+	      }
+	    }
+	    if (!recordedPass) {
+	      state.addLog(
+	        "log.card.passed",
+	        {
+	          cardId: state.selectedCard.id,
+	          deck: state.selectedCard.deckKey,
+	          type: state.selectedCard.type,
+	          title: state.selectedCard.name,
+	          cost: preview.cost,
+	          cashFlow: preview.cashflow
+	        },
+	        currentPlayerId ?? undefined
+	      );
+	    }
+	    state.clearCard();
+	  },
+	  resolveMarket: (payload) => {
+	    const state = get();
+	    if (state.turnState !== "awaitMarket") return;
+	    if (!state.selectedCard) return;
+	    if (!state.currentPlayerId) return;
 
     const cardSnapshot = state.selectedCard;
     const currentPlayerId = state.currentPlayerId;
@@ -778,22 +1158,16 @@ export const useGameStore = create<GameStore>((set, get) => {
         if (!card) return;
         if (!draft.currentPlayerId) return;
 
-        const normalizeQuantity = (value: unknown, max: number): number => {
-          if (!Number.isFinite(max) || max <= 0) return 0;
-          const raw = typeof value === "number" ? value : Number(value);
-          if (!Number.isFinite(raw)) return 0;
-          const normalized = Math.floor(raw);
-          if (normalized <= 0) return 0;
-          return Math.min(normalized, Math.floor(max));
-        };
+	        const normalizeQuantity = (value: unknown, max: number): number => {
+	          if (!Number.isFinite(max) || max <= 0) return 0;
+	          const raw = typeof value === "number" ? value : Number(value);
+	          if (!Number.isFinite(raw)) return 0;
+	          const normalized = Math.floor(raw);
+	          if (normalized <= 0) return 0;
+	          return Math.min(normalized, Math.floor(max));
+	        };
 
-        const buildTurnOrder = (): Player[] => {
-          const startIndex = draft.players.findIndex((p) => p.id === draft.currentPlayerId);
-          if (startIndex < 0) return draft.players;
-          return [...draft.players.slice(startIndex), ...draft.players.slice(0, startIndex)];
-        };
-
-        if (card.deckKey === "offers") {
+	        if (card.deckKey === "offers") {
           const kind = isOfferImproveCard(card)
             ? "improve"
             : isOfferForcedLimitedSaleCard(card)
@@ -802,11 +1176,9 @@ export const useGameStore = create<GameStore>((set, get) => {
                 ? "sell"
                 : "noop";
 
-          const allowAllPlayers = kind !== "sell" || cardMentionsEveryone(card);
-          const allowedPlayerIds = new Set<string>(
-            allowAllPlayers ? draft.players.map((p) => p.id) : [draft.currentPlayerId].filter(Boolean)
-          );
-          const turnOrder = buildTurnOrder();
+	          const allowAllPlayers = kind !== "sell" || cardMentionsEveryone(card);
+	          const turnOrder = buildTurnOrder(draft.players, draft.currentPlayerId);
+	          const allowedPlayerIds = new Set<string>(allowAllPlayers ? turnOrder.map((p) => p.id) : [draft.currentPlayerId]);
 
           turnOrder.forEach((player) => {
             if (!allowedPlayerIds.has(player.id)) return;
@@ -939,15 +1311,13 @@ export const useGameStore = create<GameStore>((set, get) => {
           const price = typeof card.price === "number" ? card.price : 0;
           if (!symbol || !Number.isFinite(price) || price <= 0) {
             // 无法解析的证券卡：当作已读并结束。
-          } else {
-            const allowAllPlayers = cardMentionsEveryone(card);
-            const allowedPlayerIds = new Set<string>(
-              allowAllPlayers ? draft.players.map((p) => p.id) : [draft.currentPlayerId].filter(Boolean)
-            );
-            const normalizedSymbol = symbol.toLowerCase();
-            const turnOrder = buildTurnOrder();
+	          } else {
+	            const allowAllPlayers = cardMentionsEveryone(card);
+	            const normalizedSymbol = symbol.toLowerCase();
+	            const turnOrder = buildTurnOrder(draft.players, draft.currentPlayerId);
+	            const allowedPlayerIds = new Set<string>(allowAllPlayers ? turnOrder.map((p) => p.id) : [draft.currentPlayerId]);
 
-            // 先按回合顺序处理卖出，避免“先买后卖”导致不必要的贷款。
+	            // 先按回合顺序处理卖出，避免“先买后卖”导致不必要的贷款。
             turnOrder.forEach((player) => {
               if (!allowedPlayerIds.has(player.id)) return;
               const perPlayer = sellSelections[player.id] ?? {};
@@ -1127,23 +1497,273 @@ export const useGameStore = create<GameStore>((set, get) => {
       });
     }
 
-    after.addLog(
-      "log.market.resolved",
-      {
-        cardId: cardSnapshot.id,
-        deck: cardSnapshot.deckKey,
-        type: cardSnapshot.type,
-        offerPlayers: offerOutcomes.length,
-        stockTrades: stockTrades.length
-      },
-      currentPlayerId
-    );
-  },
-  rollDice: () => {
-    const state = get();
-    if (!state.currentPlayerId) {
-      return;
-    }
+	    after.addLog(
+	      "log.market.resolved",
+	      {
+	        cardId: cardSnapshot.id,
+	        deck: cardSnapshot.deckKey,
+	        type: cardSnapshot.type,
+	        offerPlayers: offerOutcomes.length,
+	        stockTrades: stockTrades.length
+	      },
+	      currentPlayerId
+	    );
+	  },
+	  setMarketSellQuantity: (assetId, quantity) => {
+	    const state = get();
+	    if (state.turnState !== "awaitMarket") return;
+	    const cardSnapshot = state.selectedCard;
+	    const sessionSnapshot = state.marketSession;
+	    if (!cardSnapshot || !sessionSnapshot) return;
+	    if (sessionSnapshot.stage !== "sell") return;
+
+	    set(
+	      produce<GameStore>((draft) => {
+	        if (draft.turnState !== "awaitMarket") return;
+	        const card = draft.selectedCard;
+	        const session = draft.marketSession;
+	        if (!card || !session) return;
+	        if (card.id !== cardSnapshot.id) return;
+	        if (session.cardId !== card.id) return;
+	        if (session.stage !== "sell") return;
+	        const responderId = session.responders[session.responderIndex];
+	        if (!responderId) return;
+	        const responder = draft.players.find((player) => player.id === responderId);
+	        if (!responder) return;
+	        const asset = responder.assets.find((candidate) => candidate.id === assetId);
+	        if (!asset) return;
+
+	        if (card.deckKey === "offers") {
+	          if (!matchesOffer(asset, card)) return;
+	        } else if (isTradeableSecurityCard(card)) {
+	          const symbol = typeof card.symbol === "string" ? card.symbol.toLowerCase() : "";
+	          const assetSymbol = asset.metadata?.symbol;
+	          if (asset.category !== "stock" || typeof assetSymbol !== "string" || assetSymbol.toLowerCase() !== symbol) return;
+	        } else {
+	          return;
+	        }
+
+	        const available = getAssetAvailableQuantity(asset);
+	        const raw = typeof quantity === "number" ? quantity : Number(quantity);
+	        if (!Number.isFinite(raw)) return;
+	        const normalized = Math.min(Math.max(0, Math.floor(raw)), available);
+
+	        if (!session.sell[responderId]) {
+	          session.sell[responderId] = {};
+	        }
+
+	        if (normalized <= 0) {
+	          delete session.sell[responderId][assetId];
+	          if (Object.keys(session.sell[responderId]).length === 0) {
+	            delete session.sell[responderId];
+	          }
+	        } else {
+	          session.sell[responderId][assetId] = normalized;
+	        }
+	      })
+	    );
+	  },
+	  setMarketBuyQuantity: (quantity) => {
+	    const state = get();
+	    if (state.turnState !== "awaitMarket") return;
+	    const cardSnapshot = state.selectedCard;
+	    const sessionSnapshot = state.marketSession;
+	    if (!cardSnapshot || !sessionSnapshot) return;
+	    if (sessionSnapshot.stage !== "buy") return;
+	    if (!isTradeableSecurityCard(cardSnapshot)) return;
+
+	    const raw = typeof quantity === "number" ? quantity : Number(quantity);
+	    if (!Number.isFinite(raw)) return;
+	    const normalized = Math.max(0, Math.floor(raw));
+
+	    set(
+	      produce<GameStore>((draft) => {
+	        if (draft.turnState !== "awaitMarket") return;
+	        const card = draft.selectedCard;
+	        const session = draft.marketSession;
+	        if (!card || !session) return;
+	        if (card.id !== cardSnapshot.id) return;
+	        if (session.cardId !== card.id) return;
+	        if (session.stage !== "buy") return;
+	        if (!isTradeableSecurityCard(card)) return;
+	        session.buyQuantity = normalized;
+	      })
+	    );
+	  },
+	  confirmMarketStep: () => {
+	    const state = get();
+	    if (state.turnState !== "awaitMarket") return;
+	    const card = state.selectedCard;
+	    if (!card || !state.currentPlayerId) return;
+	    const session = state.marketSession;
+	    if (!session || session.cardId !== card.id) {
+	      state.resolveMarket();
+	      return;
+	    }
+
+	    if (session.stage === "sell") {
+	      const responderId = session.responders[session.responderIndex];
+	      if (!responderId) return;
+	      const responder = state.players.find((player) => player.id === responderId);
+	      const perPlayer = session.sell[responderId] ?? {};
+	      const selections = responder ? buildMarketSellSelectionDetails(responder, card, perPlayer) : [];
+
+	      state.addLog(
+	        "log.market.sellResponse",
+	        {
+	          cardId: card.id,
+	          deck: card.deckKey,
+	          type: card.type,
+	          responderIndex: session.responderIndex + 1,
+	          responderTotal: session.responders.length,
+	          selections
+	        },
+	        responderId
+	      );
+
+	      const isLastResponder = session.responderIndex >= session.responders.length - 1;
+	      if (!isLastResponder) {
+	        set(
+	          produce<GameStore>((draft) => {
+	            if (!draft.marketSession || !draft.selectedCard) return;
+	            if (draft.marketSession.cardId !== card.id || draft.selectedCard.id !== card.id) return;
+	            if (draft.marketSession.stage !== "sell") return;
+	            draft.marketSession.responderIndex += 1;
+	          })
+	        );
+	        return;
+	      }
+
+	      if (isTradeableSecurityCard(card)) {
+	        set(
+	          produce<GameStore>((draft) => {
+	            if (!draft.marketSession || !draft.selectedCard) return;
+	            if (draft.marketSession.cardId !== card.id || draft.selectedCard.id !== card.id) return;
+	            draft.marketSession.stage = "buy";
+	            draft.marketSession.buyQuantity = 0;
+	          })
+	        );
+	        return;
+	      }
+
+	      state.resolveMarket({ buyQuantity: 0, sell: session.sell });
+	      return;
+	    }
+
+	    if (session.stage === "buy") {
+	      const buyQuantity = session.buyQuantity;
+	      state.addLog(
+	        "log.market.buyResponse",
+	        {
+	          cardId: card.id,
+	          deck: card.deckKey,
+	          type: card.type,
+	          symbol: card.symbol,
+	          price: card.price,
+	          buyQuantity
+	        },
+	        state.currentPlayerId
+	      );
+	      state.resolveMarket({ buyQuantity, sell: session.sell });
+	    }
+	  },
+	  skipMarketStep: () => {
+	    const state = get();
+	    if (state.turnState !== "awaitMarket") return;
+	    const cardSnapshot = state.selectedCard;
+	    const sessionSnapshot = state.marketSession;
+	    if (!cardSnapshot || !sessionSnapshot) {
+	      state.resolveMarket({ buyQuantity: 0, sell: {} });
+	      return;
+	    }
+
+	    if (sessionSnapshot.stage === "sell") {
+	      const responderId = sessionSnapshot.responders[sessionSnapshot.responderIndex];
+	      if (!responderId) return;
+	      set(
+	        produce<GameStore>((draft) => {
+	          if (!draft.marketSession || !draft.selectedCard) return;
+	          if (draft.marketSession.cardId !== cardSnapshot.id || draft.selectedCard.id !== cardSnapshot.id) return;
+	          delete draft.marketSession.sell[responderId];
+	        })
+	      );
+	      state.confirmMarketStep();
+	      return;
+	    }
+
+	    if (sessionSnapshot.stage === "buy") {
+	      state.setMarketBuyQuantity(0);
+	      state.confirmMarketStep();
+	    }
+	  },
+	  skipMarketAll: () => {
+	    const state = get();
+	    if (state.turnState !== "awaitMarket") return;
+	    const card = state.selectedCard;
+	    if (!card || !state.currentPlayerId) return;
+	    const session = state.marketSession;
+	    if (!session || session.cardId !== card.id) {
+	      state.resolveMarket({ buyQuantity: 0, sell: {} });
+	      return;
+	    }
+
+	    if (session.stage === "sell") {
+	      const remainingResponders = session.responders.slice(session.responderIndex);
+	      remainingResponders.forEach((responderId, offset) => {
+	        const responder = state.players.find((player) => player.id === responderId);
+	        const perPlayer = offset === 0 ? session.sell[responderId] ?? {} : {};
+	        const selections = responder ? buildMarketSellSelectionDetails(responder, card, perPlayer) : [];
+	        state.addLog(
+	          "log.market.sellResponse",
+	          {
+	            cardId: card.id,
+	            deck: card.deckKey,
+	            type: card.type,
+	            responderIndex: session.responderIndex + offset + 1,
+	            responderTotal: session.responders.length,
+	            selections,
+	            skippedAll: true
+	          },
+	          responderId
+	        );
+	      });
+	    }
+
+	    if (isTradeableSecurityCard(card)) {
+	      state.addLog(
+	        "log.market.buyResponse",
+	        {
+	          cardId: card.id,
+	          deck: card.deckKey,
+	          type: card.type,
+	          symbol: card.symbol,
+	          price: card.price,
+	          buyQuantity: 0,
+	          skippedAll: true
+	        },
+	        state.currentPlayerId
+	      );
+	    }
+
+	    set(
+	      produce<GameStore>((draft) => {
+	        if (draft.turnState !== "awaitMarket") return;
+	        const draftCard = draft.selectedCard;
+	        const draftSession = draft.marketSession;
+	        if (!draftCard || !draftSession) return;
+	        if (draftSession.cardId !== draftCard.id) return;
+	        draftSession.sell = {};
+	        draftSession.buyQuantity = 0;
+	      })
+	    );
+
+	    state.resolveMarket({ buyQuantity: 0, sell: {} });
+	  },
+		  rollDice: () => {
+		    const state = get();
+		    if (!state.currentPlayerId) {
+		      return;
+		    }
     if (state.turnState !== "awaitRoll") {
       return;
     }
@@ -1168,36 +1788,55 @@ export const useGameStore = create<GameStore>((set, get) => {
     const baseDice = state.settings.useCashflowDice ? 1 : 2;
     const charityBonus = hasCharityBoost ? 1 : 0;
     const dieCount = Math.max(1, baseDice + charityBonus);
-    const diceValues = Array.from({ length: dieCount }, () => Math.ceil(Math.random() * 6));
-    const total = diceValues.reduce((sum, value) => sum + value, 0);
-    const dice: DiceRoll = { dice: diceValues, total };
+	    let dice: DiceRoll | undefined;
 
-    set(
-      produce<GameStore>((draft) => {
-        draft.dice = dice;
-        draft.turnState = "awaitEnd";
-        const current = draft.players.find((p) => p.id === player.id);
-        if (!current) return;
-        if (hasCharityBoost && current.charityTurns > 0) {
+	    set(
+	      produce<GameStore>((draft) => {
+	        const rollValues: number[] = [];
+	        let rngState = draft.rngState;
+	        for (let i = 0; i < dieCount; i += 1) {
+	          const roll = nextRngIntInclusive(rngState, 1, 6);
+	          rngState = roll.rngState;
+	          rollValues.push(roll.value);
+	        }
+	        const total = rollValues.reduce((sum, value) => sum + value, 0);
+	        dice = { dice: rollValues, total };
+	        draft.dice = dice;
+	        draft.rngState = rngState;
+	        draft.turnState = "awaitEnd";
+	        const current = draft.players.find((p) => p.id === player.id);
+	        if (!current) return;
+	        if (hasCharityBoost && current.charityTurns > 0) {
           current.charityTurns -= 1;
         }
-        const trackBoard = current.track === "fastTrack" ? draft.fastTrackBoard : draft.board;
-        if (trackBoard.length > 0) {
-          current.position = (current.position + total) % trackBoard.length;
-        }
-      })
-    );
+	        const trackBoard = current.track === "fastTrack" ? draft.fastTrackBoard : draft.board;
+	        if (trackBoard.length > 0) {
+	          current.position = (current.position + (dice?.total ?? 0)) % trackBoard.length;
+	        }
+	      })
+	    );
 
-    const newPlayer = get().players.find((p) => p.id === player.id);
-    if (newPlayer) {
-      get().addLog("log.playerRolled", { dice, position: newPlayer.position }, newPlayer.id);
-      get().resolvePayday(newPlayer.id, previousPosition, total);
-    }
-  },
-  drawCard: (deck) => {
-    const state = get();
-    if (state.turnState !== "awaitAction") {
-      return;
+	    const newPlayer = get().players.find((p) => p.id === player.id);
+	    if (newPlayer && dice) {
+	      get().addLog(
+	        "log.playerRolled",
+	        {
+	          dice,
+	          fromPosition: previousPosition,
+	          position: newPlayer.position,
+	          steps: dice.total,
+	          track: newPlayer.track,
+	          boardLength: playerBoardLength
+	        },
+	        newPlayer.id
+	      );
+	      get().resolvePayday(newPlayer.id, previousPosition, dice.total);
+	    }
+	  },
+	  drawCard: (deck) => {
+	    const state = get();
+	    if (state.turnState !== "awaitAction") {
+	      return;
     }
     if ((deck === "smallDeals" && !state.settings.enableSmallDeals) || (deck === "bigDeals" && !state.settings.enableBigDeals)) {
       return;
@@ -1217,28 +1856,51 @@ export const useGameStore = create<GameStore>((set, get) => {
     if (deck !== "smallDeals" && deck !== "bigDeals") {
       return;
     }
-    if (state.selectedCard) {
-      return;
-    }
-    set(
-      produce<GameStore>((draft) => {
-        if (draft.selectedCard) return;
-        const player = draft.players.find((p) => p.id === draft.currentPlayerId);
+	    if (state.selectedCard) {
+	      return;
+	    }
+	    set(
+	      produce<GameStore>((draft) => {
+	        if (draft.selectedCard) return;
+	        const player = draft.players.find((p) => p.id === draft.currentPlayerId);
         if (!player || player.track !== "ratRace") return;
         const currentSquare = draft.board[player.position];
         if (!currentSquare || currentSquare.type !== "OPPORTUNITY") return;
-        const drawn = drawCardForPlayer(draft, deck, player);
-        if (drawn) {
-          const card = draft.selectedCard;
-          if (card && (isTradeableSecurityCard(card) || isStockSplitEventCard(card))) {
-            draft.turnState = "awaitMarket";
-          } else {
-            draft.turnState = "awaitCard";
-          }
-        }
-      })
-    );
-  },
+	        const drawn = drawCardForPlayer(draft, deck, player);
+	        if (drawn) {
+	          const card = draft.selectedCard;
+	          if (card && (isTradeableSecurityCard(card) || isStockSplitEventCard(card))) {
+	            draft.turnState = "awaitMarket";
+	            ensureMarketSessionForSelectedCard(draft);
+	          } else {
+	            draft.turnState = "awaitCard";
+	            draft.marketSession = undefined;
+	          }
+	        }
+	      })
+	    );
+	    const after = get();
+	    const drawnCard = after.selectedCard;
+	    if (drawnCard && after.currentPlayerId) {
+	      const preview = after.getCardPreview(drawnCard, after.currentPlayerId);
+	      const currentPlayer = after.players.find((player) => player.id === after.currentPlayerId);
+	      after.addLog(
+	        "log.card.drawn",
+	        {
+	          deck,
+	          cardId: drawnCard.id,
+	          type: drawnCard.type,
+	          title: drawnCard.name,
+	          cost: preview.cost,
+	          cashFlow: preview.cashflow,
+	          turnState: after.turnState,
+	          position: currentPlayer?.position,
+	          track: currentPlayer?.track
+	        },
+	        after.currentPlayerId
+	      );
+	    }
+		  },
   clearCard: () => {
     const state = get();
     const currentPlayerId = state.currentPlayerId ?? undefined;
@@ -1402,7 +2064,8 @@ export const useGameStore = create<GameStore>((set, get) => {
         cashDelta,
         cashflowDelta: appliedCashflow || undefined,
         assetCategory: recordedAsset?.category,
-        assetCost: recordedAsset?.cost
+        assetCost: recordedAsset?.cost,
+        fastTrackEvent: card.fastTrackEvent
       },
       playerId
     );
@@ -1417,8 +2080,11 @@ export const useGameStore = create<GameStore>((set, get) => {
     let charityAmount: number | undefined;
     let liabilityPenalty: number | undefined;
     let fastTrackBonus: number | undefined;
+    let fastTrackPaydayHits: number | undefined;
+    let fastTrackPaydayPerHit: number | undefined;
     let passiveBoost: number | undefined;
     let fastPenalty: number | undefined;
+    let fastTrackDoodadOutcome: Record<string, unknown> | undefined;
     let visitedFastDream = false;
     let dreamWin = false;
     let bankLoans: NonNullable<BankLoanResult>[] = [];
@@ -1443,13 +2109,260 @@ export const useGameStore = create<GameStore>((set, get) => {
             target.cash += paydayAward;
           }
         } else {
-          const fastHits = visited.filter((pos) => draft.fastTrackBoard[pos]?.type === "FAST_PAYDAY").length;
+          const fastHits = visited.filter((pos) => getFastTrackEvent(pos)?.kind === "payday").length;
           if (fastHits > 0) {
+            fastTrackPaydayHits = fastHits;
+            fastTrackPaydayPerHit = target.payday;
             const bonus = target.payday * fastHits;
             fastTrackBonus = (fastTrackBonus ?? 0) + bonus;
             target.cash += bonus;
           }
           paydayHits = 0;
+        }
+
+        if (target.track === "fastTrack") {
+          const event = getFastTrackEvent(boardEntry.id);
+          const params = event?.params;
+
+          switch (event?.kind) {
+            case "passiveBoost": {
+              const minBoost = typeof params?.minBoost === "number" && Number.isFinite(params.minBoost) ? params.minBoost : 2000;
+              const paydayMultiplier =
+                typeof params?.paydayMultiplier === "number" && Number.isFinite(params.paydayMultiplier) ? params.paydayMultiplier : 0.5;
+              passiveBoost = Math.max(minBoost, Math.round(target.payday * paydayMultiplier));
+              target.passiveIncome += passiveBoost;
+              recalcPlayerIncome(target);
+              draft.turnState = "awaitEnd";
+              break;
+            }
+            case "investment": {
+              const title = typeof params?.title === "string" ? params.title : "Fast Track Opportunity";
+              const description = typeof params?.description === "string" ? params.description : "";
+              const cost = typeof params?.cost === "number" && Number.isFinite(params.cost) ? Math.max(0, Math.round(params.cost)) : 0;
+              const cashFlow =
+                typeof params?.cashFlow === "number" && Number.isFinite(params.cashFlow) ? Math.round(params.cashFlow) : 0;
+              const assetType = typeof params?.assetType === "string" ? params.assetType : "Business";
+
+              discardSelectedCard(draft);
+              draft.selectedCard = {
+                id: event?.id ?? `ft-${boardEntry.id + 1}`,
+                type: assetType,
+                name: title,
+                description,
+                cost,
+                cashFlow,
+                fastTrackEvent: {
+                  id: event?.id ?? `ft-${boardEntry.id + 1}`,
+                  legacyKey: event?.legacyKey,
+                  squareId: boardEntry.id,
+                  kind: event?.kind,
+                  cost,
+                  cashFlow
+                }
+              };
+              draft.turnState = "awaitCard";
+              break;
+            }
+            case "rollPayout": {
+              const title = typeof params?.title === "string" ? params.title : "Fast Track Opportunity";
+              const description = typeof params?.description === "string" ? params.description : "";
+              const cost = typeof params?.cost === "number" && Number.isFinite(params.cost) ? Math.max(0, Math.round(params.cost)) : 0;
+              const payout = typeof params?.payout === "number" && Number.isFinite(params.payout) ? Math.max(0, Math.round(params.payout)) : 0;
+              const successFaces = Array.isArray(params?.successFaces)
+                ? params.successFaces.filter((value: unknown): value is number => typeof value === "number" && Number.isFinite(value))
+                : [];
+              const assetType = typeof params?.assetType === "string" ? params.assetType : "Stock";
+
+              discardSelectedCard(draft);
+              draft.selectedCard = {
+                id: event?.id ?? `ft-${boardEntry.id + 1}`,
+                type: assetType,
+                name: title,
+                description,
+                cost,
+                cashFlow: 0,
+                roi: payout,
+                fastTrackEvent: {
+                  id: event?.id ?? `ft-${boardEntry.id + 1}`,
+                  legacyKey: event?.legacyKey,
+                  squareId: boardEntry.id,
+                  kind: event?.kind,
+                  cost,
+                  payout,
+                  successFaces
+                }
+              };
+              draft.turnState = "awaitCard";
+              break;
+            }
+            case "rollCashflow": {
+              const title = typeof params?.title === "string" ? params.title : "Fast Track Opportunity";
+              const description = typeof params?.description === "string" ? params.description : "";
+              const cost = typeof params?.cost === "number" && Number.isFinite(params.cost) ? Math.max(0, Math.round(params.cost)) : 0;
+              const successCashFlow =
+                typeof params?.successCashFlow === "number" && Number.isFinite(params.successCashFlow)
+                  ? Math.round(params.successCashFlow)
+                  : 0;
+              const failureCashFlow =
+                typeof params?.failureCashFlow === "number" && Number.isFinite(params.failureCashFlow)
+                  ? Math.round(params.failureCashFlow)
+                  : 0;
+              const successFaces = Array.isArray(params?.successFaces)
+                ? params.successFaces.filter((value: unknown): value is number => typeof value === "number" && Number.isFinite(value))
+                : [];
+              const assetType = typeof params?.assetType === "string" ? params.assetType : "Business";
+
+              discardSelectedCard(draft);
+              draft.selectedCard = {
+                id: event?.id ?? `ft-${boardEntry.id + 1}`,
+                type: assetType,
+                name: title,
+                description,
+                cost,
+                cashFlow: successCashFlow,
+                fastTrackEvent: {
+                  id: event?.id ?? `ft-${boardEntry.id + 1}`,
+                  legacyKey: event?.legacyKey,
+                  squareId: boardEntry.id,
+                  kind: event?.kind,
+                  cost,
+                  successCashFlow,
+                  failureCashFlow,
+                  successFaces
+                }
+              };
+              draft.turnState = "awaitCard";
+              break;
+            }
+            case "donation": {
+              const rate = typeof params?.rate === "number" && Number.isFinite(params.rate) ? params.rate : 0.2;
+              const minDonation =
+                typeof params?.minDonation === "number" && Number.isFinite(params.minDonation) ? params.minDonation : 5000;
+              charityAmount = Math.max(Math.round(target.totalIncome * rate), minDonation);
+              draft.charityPrompt = { playerId, amount: charityAmount };
+              draft.turnState = "awaitCharity";
+              break;
+            }
+            case "penalty": {
+              const minPenalty =
+                typeof params?.minPenalty === "number" && Number.isFinite(params.minPenalty) ? params.minPenalty : 3000;
+              fastPenalty = Math.max(target.totalExpenses, minPenalty);
+              const cashAvailable = target.cash;
+              if (cashAvailable < fastPenalty) {
+                paymentFailure = {
+                  logKey: "log.board.fast_penalty.failed",
+                  required: fastPenalty,
+                  cashAvailable,
+                  shortfall: fastPenalty - cashAvailable,
+                  track: target.track
+                };
+                target.status = "bankrupt";
+                if (draft.players.every((player) => player.status === "bankrupt")) {
+                  draft.phase = "finished";
+                }
+              } else {
+                target.cash -= fastPenalty;
+              }
+              draft.turnState = "awaitEnd";
+              break;
+            }
+            case "doodad": {
+              const title = typeof params?.title === "string" ? params.title : "Fast Track Doodad";
+              const variant = typeof params?.variant === "string" ? params.variant : "unknown";
+              const doodadIndex =
+                typeof params?.doodadIndex === "number" && Number.isFinite(params.doodadIndex) ? params.doodadIndex : undefined;
+
+              const beforeCash = target.cash;
+              let roll: number | undefined;
+              let cashDelta = 0;
+              let paidAmount: number | undefined;
+              let removedAsset:
+                | { id: string; name: string; category: Asset["category"]; cashflow: number; cost: number }
+                | undefined;
+
+              const removeLowestCashflowAsset = () => {
+                if (target.assets.length === 0) return;
+                let lowestIndex = 0;
+                let lowestCashflow = target.assets[0]?.cashflow ?? 0;
+                target.assets.forEach((asset, index) => {
+                  const cashflow = typeof asset.cashflow === "number" && Number.isFinite(asset.cashflow) ? asset.cashflow : 0;
+                  if (cashflow < lowestCashflow) {
+                    lowestCashflow = cashflow;
+                    lowestIndex = index;
+                  }
+                });
+                const [asset] = target.assets.splice(lowestIndex, 1);
+                if (asset) {
+                  removedAsset = {
+                    id: asset.id,
+                    name: asset.name,
+                    category: asset.category,
+                    cashflow: asset.cashflow,
+                    cost: asset.cost
+                  };
+                  target.passiveIncome = Math.max(0, target.passiveIncome - asset.cashflow);
+                }
+              };
+
+	              if (variant === "healthcare") {
+	                const result = nextRngIntInclusive(draft.rngState, 1, 6);
+	                draft.rngState = result.rngState;
+	                roll = result.value;
+	                if (roll >= 4) {
+	                  paidAmount = target.cash;
+	                  target.cash = 0;
+	                }
+              } else if (variant === "loseHalfCash") {
+                paidAmount = Math.round(target.cash * 0.5);
+                target.cash = Math.max(0, target.cash - paidAmount);
+              } else if (variant === "loseLowestCashflowAsset") {
+                removeLowestCashflowAsset();
+              } else if (variant === "repairs") {
+                if (target.assets.length > 0) {
+                  let lowestAsset = target.assets[0];
+                  target.assets.forEach((asset) => {
+                    if (asset.cashflow < lowestAsset.cashflow) {
+                      lowestAsset = asset;
+                    }
+                  });
+                  const fee = Math.max(0, Math.round(lowestAsset.cashflow * 10));
+                  if (fee <= 0) {
+                    paidAmount = 0;
+                  } else if (target.cash >= fee) {
+                    paidAmount = fee;
+                    target.cash -= fee;
+                  } else {
+                    removeLowestCashflowAsset();
+                  }
+                }
+              }
+
+              cashDelta = target.cash - beforeCash;
+              recalcPlayerIncome(target);
+
+              fastTrackDoodadOutcome = {
+                doodadIndex,
+                title,
+                variant,
+                roll,
+                cashDelta,
+                paidAmount,
+                removedAsset
+              };
+              draft.turnState = "awaitEnd";
+              break;
+            }
+            case "dream":
+              visitedFastDream = true;
+              draft.turnState = "awaitEnd";
+              break;
+            case "payday":
+            case "noop":
+            default:
+              draft.turnState = "awaitEnd";
+              break;
+          }
+          return;
         }
 
         switch (boardEntry.type) {
@@ -1465,6 +2378,9 @@ export const useGameStore = create<GameStore>((set, get) => {
             {
               const drawn = drawCardForPlayer(draft, "offers", target);
               draft.turnState = drawn ? "awaitMarket" : "awaitEnd";
+              if (drawn) {
+                ensureMarketSessionForSelectedCard(draft);
+              }
             }
             break;
           case "CHARITY":
@@ -1507,52 +2423,7 @@ export const useGameStore = create<GameStore>((set, get) => {
             draft.turnState = "awaitEnd";
             break;
           case "OPPORTUNITY":
-            draft.turnState = target.track === "ratRace" ? "awaitAction" : "awaitEnd";
-            break;
-          case "FAST_PAYDAY":
-            fastTrackBonus = fastTrackBonus ?? target.payday;
-            draft.turnState = "awaitEnd";
-            break;
-          case "FAST_OPPORTUNITY":
-            passiveBoost = Math.max(2000, Math.round(target.payday * 0.5));
-            target.passiveIncome += passiveBoost;
-            recalcPlayerIncome(target);
-            draft.turnState = "awaitEnd";
-            break;
-          case "FAST_DONATION":
-            charityAmount = Math.max(Math.round(target.totalIncome * 0.2), 5000);
-            draft.charityPrompt = { playerId, amount: charityAmount };
-            draft.turnState = "awaitCharity";
-            break;
-          case "FAST_PENALTY":
-            fastPenalty = Math.max(target.totalExpenses, 3000);
-            {
-              const cashAvailable = target.cash;
-              const financing = ensureFunds(target, fastPenalty);
-              if (!financing.ok) {
-                paymentFailure = {
-                  logKey: "log.board.fast_penalty.failed",
-                  required: fastPenalty,
-                  cashAvailable,
-                  shortfall: financing.shortfall,
-                  track: target.track
-                };
-                if (target.track === "fastTrack") {
-                  target.status = "bankrupt";
-                  if (draft.players.every((player) => player.status === "bankrupt")) {
-                    draft.phase = "finished";
-                  }
-                }
-              } else {
-                if (financing.loan) bankLoans.push(financing.loan);
-                target.cash -= fastPenalty;
-              }
-            }
-            draft.turnState = "awaitEnd";
-            break;
-          case "FAST_DREAM":
-            visitedFastDream = true;
-            draft.turnState = "awaitEnd";
+            draft.turnState = "awaitAction";
             break;
           case "PAYCHECK":
           default:
@@ -1574,8 +2445,29 @@ export const useGameStore = create<GameStore>((set, get) => {
         : resolvedPlayer
           ? state.board[resolvedPlayer.position]
           : undefined;
-    if (boardEntry && resolvedPlayer) {
-      const payload: Record<string, unknown> = { square: boardEntry, track: resolvedPlayer.track };
+	    if (boardEntry && resolvedPlayer) {
+	      const payload: Record<string, unknown> = { square: boardEntry, track: resolvedPlayer.track };
+	      if (state.currentPlayerId === playerId && state.selectedCard) {
+	        const preview = state.getCardPreview(state.selectedCard, playerId);
+	        payload.selectedCard = {
+	          id: state.selectedCard.id,
+	          deck: state.selectedCard.deckKey,
+	          type: state.selectedCard.type,
+	          title: state.selectedCard.name,
+	          cost: preview.cost,
+	          cashFlow: preview.cashflow
+	        };
+	      }
+	      if (resolvedPlayer.track === "fastTrack") {
+	        const event = getFastTrackEvent(boardEntry.id);
+	        if (event) {
+	          payload.event = { id: event.id, kind: event.kind, legacyKey: event.legacyKey, params: event.params };
+	        }
+        if (typeof fastTrackPaydayHits === "number" && fastTrackPaydayHits > 0) {
+          payload.cashflowDayHits = fastTrackPaydayHits;
+          payload.cashflowDayPayday = fastTrackPaydayPerHit;
+        }
+      }
       if (paydayHits > 0) {
         payload.paychecks = paydayHits;
         payload.paydayAward = paydayAward;
@@ -1601,6 +2493,9 @@ export const useGameStore = create<GameStore>((set, get) => {
       if (fastPenalty) {
         payload.fastPenalty = fastPenalty;
       }
+      if (fastTrackDoodadOutcome) {
+        payload.fastTrackDoodad = fastTrackDoodadOutcome;
+      }
       if (paymentFailure) {
         payload.paymentFailed = true;
         payload.paymentRequired = paymentFailure.required;
@@ -1615,7 +2510,8 @@ export const useGameStore = create<GameStore>((set, get) => {
         dreamWin = true;
         payload.dreamAchieved = true;
       }
-      state.addLog(paymentFailure?.logKey ?? `log.board.${boardEntry.type.toLowerCase()}`, payload, playerId);
+      const eventLogKey = resolvedPlayer.track === "fastTrack" ? getFastTrackEvent(boardEntry.id)?.logKey : undefined;
+      state.addLog(paymentFailure?.logKey ?? eventLogKey ?? `log.board.${boardEntry.type.toLowerCase()}`, payload, playerId);
       if (resolvedPlayer.status === "bankrupt") {
         state.addLog(
           "log.fastTrack.bankrupt",
@@ -1824,9 +2720,9 @@ export const useGameStore = create<GameStore>((set, get) => {
       );
     }
   },
-  clearLog: () => {
-    set({ logs: [] });
-  },
+	clearLog: () => {
+	    set({ logs: [], replayFrames: [] });
+	  },
   recordLLMAction: (playerId, action) => {
     get().addLog("log.llmAction", { action }, playerId);
   },
