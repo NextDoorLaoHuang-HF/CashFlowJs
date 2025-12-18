@@ -365,9 +365,10 @@ const deriveAssetCost = (card: BaseCard, fallback: number): number => {
 };
 
 const getLandType = (card: BaseCard): string | undefined => {
+  const businessType = typeof card.businessType === "string" ? card.businessType : undefined;
   const landType = typeof card.landType === "string" ? card.landType : undefined;
   const tag = typeof card.tag === "string" ? card.tag : undefined;
-  return (landType ?? tag)?.toLowerCase();
+  return (businessType ?? landType ?? tag)?.toLowerCase();
 };
 
 const deriveCardCashflow = (card: BaseCard, provided?: number): number => {

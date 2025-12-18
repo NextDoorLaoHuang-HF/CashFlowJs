@@ -15,7 +15,12 @@ export const getCardRuleText = (card: BaseCard): string => {
   return combined.toLowerCase();
 };
 
-export const cardMentionsEveryone = (card: BaseCard): boolean => getCardRuleText(card).includes("everyone");
+const EVERYONE_KEYWORDS = ["everyone", "anyone", "any player", "each player", "every player", "all players"] as const;
+
+export const cardMentionsEveryone = (card: BaseCard): boolean => {
+  const text = getCardRuleText(card);
+  return EVERYONE_KEYWORDS.some((keyword) => text.includes(keyword));
+};
 
 export const isOfferSellCard = (card: BaseCard): boolean =>
   typeof card.offer === "number" || typeof card.offerPerUnit === "number";
@@ -101,4 +106,3 @@ export const matchesOffer = (asset: Asset, card: BaseCard): boolean => {
   }
   return landType === offerType;
 };
-

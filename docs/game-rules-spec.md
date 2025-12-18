@@ -36,7 +36,10 @@
 
 ### 1.5 Market/Stock “Everyone may sell” 是否允许所有玩家响应？
 - **允许（v1.0 定案）**。  
-- 规则：当卡牌文本/字段含义为“Everyone may sell at this price”，应开放一个“响应窗口”，让所有玩家按相同价格卖出符合条件的资产。  
+- 规则：当卡牌文本/字段含义为“Everyone/Anyone/All players… may sell…”，应开放一个“响应窗口”，让所有玩家按相同价格卖出符合条件的资产。  
+- **判定口径（v1.0 定案）**：把卡牌 `rule/rule1/rule2/text/description` 合并为一个字符串并转小写后，若命中以下任一关键词/短语，则视为“全员可响应”：  
+  - `everyone`、`anyone`、`any player`、`each player`、`every player`、`all players`  
+  - 说明：该判定**仅用于决定是否开放“全员卖出响应窗口”**；买入权仍遵循各自章节（如 5.4 默认只允许当前玩家买入）。  
 - 说明：当前代码若尚未实现该交互，应视为功能缺口，按第 8 章 TODO 落地，禁止在没有声明的情况下偷偷降级为“仅当前玩家可卖”。
 
 ### 1.6 税费/孩子/保险采用固定职业卡还是动态百分比？
@@ -77,6 +80,12 @@
 - 负债（Liability）必须包含：`id/name/payment/balance/category/metadata`
 
 > 备注：旧版把资产拆成多个数组（stock/realEstate/business/coin），重构版允许合并为统一数组，但 **category 与 metadata 必须足够表达旧版字段**（如 `mortgage/units/landType`）。
+
+#### 2.2.1 Offer 匹配字段口径（v1.0 定案）
+
+- **统一口径**：Offer（市场牌）的“可卖出匹配”使用资产侧 `asset.metadata.landType`（小写）作为主键；若缺失则回退到 `asset.name`（小写）。  
+- **Company（公司类资产）特例（必须遵守）**：当机会卡数据存在 `businessType`（例如 `software` / `widget`）时，**`asset.metadata.landType` 必须写入该 `businessType`**（而不是写入通用的 `business`）。  
+  - 目的：保证 Offer 牌 `type="software"/"widget"` 能正确命中公司资产（并且不会误伤其它 business 资产）。  
 
 ---
 
@@ -155,7 +164,7 @@
 
 #### 5.1.1 抽牌与权限
 - **只有当前玩家可以买入**（Only you may buy）。  
-- 若卡面/规则写明“Everyone may sell at this price”，则卖出进入“全员响应窗口”（见 5.4）。
+- 若卡面/规则写明“Everyone/Anyone/All players… may sell…”，则卖出进入“全员响应窗口”（见 5.4；全员判定口径见 1.5）。
 
 #### 5.1.2 资产类型与通用买入规则
 
@@ -168,6 +177,7 @@
 
 - **Business / Company**
   - 买入：支付 `downPayment`；`cashFlow` 计入 `passiveIncome`。  
+  - 记账：若为 Company 且存在 `businessType`（如 `software/widget`），必须写入 `asset.metadata.landType = businessType` 以支持 Offer 卖出匹配（见 2.2.1）。  
   - 注意：若未来实现“卖出公司”，需定义对应 Offer 或估值规则（v1.0 暂不强制）。
 
 - **Stock / Mutual Fund / Preferred Stock / CD**
@@ -214,6 +224,10 @@
 1) **可选卖出（Sell Offer）**：例如房产/金币/部分资产的“按该价可卖”。  
 2) **现金流增益（Improve）**：例如 business 现金流 +250。  
 3) **强制事件（Forced）**：例如 limited partnership 强制卖出、止赎强制移除等。
+
+> v1.0 补充定案：旧版 Offer 中存在少量“卖方融资/延期结算/现金流临时变化”的文本条款（典型：`offer28` 同时包含 `offer` 与 `cashFlow=-500`，并要求“4 年后收款”）。  
+> 这类规则需要引入“应收票据/计时器”等额外状态与日志口径，超出 v1.0 三类效果范围。  
+> **v1.0 处理结论：删卡** —— `offer28` 从 Offer 牌堆中剔除，不参与抽牌；如需恢复，必须在 v1.x 增补规则后再启用。
 
 #### 5.3.2 房产卖出结算（Settlement）
 - v1.0 结算：`settlement = salePrice - mortgageBalance`（下限为 0）。  
@@ -356,6 +370,7 @@
 6) `[~]` **Fast Track 事件表**：已接入 `lib/data/fastTrackEvents.ts` 的事件表驱动与日志骨架（含 `eventId/legacyKey`）；已迁移旧版外圈机会格/IPO/doodad；仍需补齐剩余旧版 Dream 等分支细节，并对照 `docs/legacy-logic-audit.md` 修复旧 bug。  
 7) `[~]` **外圈现金不足处理**：v1.0 规则已在第 6.6 节定案；当前实现仍为“现金不足直接破产出局”，需补齐资产清算交互/日志与结算（先卖出再判定出局）。  
 8) `[ ]` **Dream perk（可选）**：`lib/data/scenarios.ts` 已有 `perk` 文案，但未落地；若要实现必须定义触发时机与数值效果。
+9) `[ ]` **Offer 特例：卖方融资/延期结算（可选）**：以 `offer28` 为代表；若要支持需先定义“应收票据/期限/到期收款”的状态与回合推进口径，并补齐可复盘日志。
 
 ---
 

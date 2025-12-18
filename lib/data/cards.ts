@@ -1612,17 +1612,6 @@ export const cards = {
       lowestUnit: 0,
       type: "apartment",
     },
-    offer28: {
-      name: "House Buyer - 3Br/2Ba",
-      description:
-        "Your brother-in-law lost his job and wants to buy your 3/2 rental house. He promises to pay you $100,000 four years from now, but has no income or savings. He can pay a small monthly amount, but no down payment...",
-      rule1: "",
-      rule2:
-        "If you sell at his terms, your cash flow goes down by $500 per month, until you collect the $100,000",
-      offer: 100000,
-      cashFlow: -500,
-      type: "3Br/2Ba",
-    },
     offer29: {
       name: "Limited Partnership Sold",
       type: "limited",
