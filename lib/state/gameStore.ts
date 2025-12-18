@@ -1272,7 +1272,18 @@ export const useGameStore = create<GameStore>((set, get) => {
                   passiveDelta -= asset.cashflow;
                   player.assets.splice(index, 1);
                 } else {
-                  player.assets[index] = { ...asset, quantity: available - quantityToSell };
+                  const fraction = available > 0 ? quantityToSell / available : 1;
+                  const soldCost = Math.round(asset.cost * fraction);
+                  const soldCashflow = Math.round(asset.cashflow * fraction);
+
+                  passiveDelta -= soldCashflow;
+
+                  player.assets[index] = {
+                    ...asset,
+                    quantity: available - quantityToSell,
+                    cost: Math.max(0, asset.cost - soldCost),
+                    cashflow: asset.cashflow - soldCashflow
+                  };
                 }
               });
 
@@ -1346,17 +1357,17 @@ export const useGameStore = create<GameStore>((set, get) => {
               let cashDelta = 0;
               let dividendDelta = 0;
 
-              Object.entries(perPlayer).forEach(([assetId, requested]) => {
-                const index = player.assets.findIndex((asset) => asset.id === assetId);
-                if (index < 0) return;
-                const asset = player.assets[index];
-                if (asset.category !== "stock") return;
-                const assetSymbol = asset.metadata?.symbol;
-                if (typeof assetSymbol !== "string" || assetSymbol.toLowerCase() !== normalizedSymbol) return;
+	              Object.entries(perPlayer).forEach(([assetId, requested]) => {
+	                const index = player.assets.findIndex((asset) => asset.id === assetId);
+	                if (index < 0) return;
+	                const asset = player.assets[index];
+	                if (asset.category !== "stock") return;
+	                const assetSymbol = asset.metadata?.symbol;
+	                if (typeof assetSymbol !== "string" || assetSymbol.toLowerCase() !== normalizedSymbol) return;
 
-                const available = getAssetAvailableQuantity(asset);
-                const toSell = normalizeQuantity(requested, available);
-                if (toSell <= 0) return;
+	                const available = getAssetAvailableQuantity(asset);
+	                const toSell = normalizeQuantity(requested, available);
+	                if (toSell <= 0) return;
 
                 const dividendPerShare =
                   typeof asset.metadata?.dividendPerShare === "number"
@@ -1376,14 +1387,21 @@ export const useGameStore = create<GameStore>((set, get) => {
                   player.passiveIncome += delta;
                 }
 
-                const remaining = available - toSell;
-                if (remaining <= 0) {
-                  player.assets.splice(index, 1);
-                } else {
-                  const nextCashflow = dividendPerShare ? dividendPerShare * remaining : asset.cashflow;
-                  player.assets[index] = { ...asset, quantity: remaining, cashflow: nextCashflow };
-                }
-              });
+	                const remaining = available - toSell;
+	                if (remaining <= 0) {
+	                  player.assets.splice(index, 1);
+	                } else {
+	                  const nextCashflow = dividendPerShare ? dividendPerShare * remaining : asset.cashflow;
+	                  const fraction = available > 0 ? toSell / available : 1;
+	                  const soldCost = Math.round(asset.cost * fraction);
+	                  player.assets[index] = {
+	                    ...asset,
+	                    quantity: remaining,
+	                    cashflow: nextCashflow,
+	                    cost: Math.max(0, asset.cost - soldCost)
+	                  };
+	                }
+	              });
 
               if (dividendDelta !== 0) {
                 recalcPlayerIncome(player);
@@ -2793,9 +2811,11 @@ export const useGameStore = create<GameStore>((set, get) => {
         player.payday = player.passiveIncome;
         player.children = 0;
         player.childExpense = 0;
-        const startSlots = [1, 7, 14, 21, 27, 34, 1, 7];
+        const startSlots = [0, 6, 13, 20, 26, 33, 0, 6];
         const playerIndex = draft.players.findIndex((p) => p.id === playerId);
-        player.position = startSlots[playerIndex] ?? 0;
+        const safeIndex = playerIndex >= 0 ? playerIndex : 0;
+        const slot = startSlots.length > 0 ? startSlots[safeIndex % startSlots.length] : 0;
+        player.position = typeof slot === "number" ? slot : 0;
         player.track = "fastTrack";
         const allPlayersFastTrack = draft.players.length > 0 && draft.players.every((p) => p.track === "fastTrack");
         if (allPlayersFastTrack) {

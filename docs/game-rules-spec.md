@@ -270,6 +270,7 @@
    - `payday = totalIncome - totalExpenses = passiveIncome`  
    - `fastTrackTarget = passiveIncome + 50_000`（胜利门槛）
 5) 起始位置：按玩家序号分配（旧版：1、7、14、21、27、34…），避免所有人叠在同一格。
+   - 说明：旧版 Fast Track 位置编号为 `1..40`；重构版内部 `position` 为 `0..39`，因此上述起点在实现中需做 `-1` 对齐（对应 `0、6、13、20、26、33…`）。
 
 ### 6.3 外圈行动规则
 
@@ -367,8 +368,8 @@
 3) `[x]` **Offer 的“选择卖出哪一项资产”**：Market 窗口按资产条目与数量选择，避免“自动卖出全部”。  
 4) `[x]` **银行贷款还款**：支持按 1000 为步长还本金，并按 `payment = round(balance * 0.1)` 自动重算月供。  
 5) `[x]` **Reverse Split 股数规则**：v1.0 口径为**向下取整**，保持整数股；拆/反拆股仅改变股数不改变现金。  
-6) `[~]` **Fast Track 事件表**：已接入 `lib/data/fastTrackEvents.ts` 的事件表驱动与日志骨架（含 `eventId/legacyKey`）；已迁移旧版外圈机会格/IPO/doodad；仍需补齐剩余旧版 Dream 等分支细节，并对照 `docs/legacy-logic-audit.md` 修复旧 bug。  
-7) `[~]` **外圈现金不足处理**：v1.0 规则已在第 6.6 节定案；当前实现仍为“现金不足直接破产出局”，需补齐资产清算交互/日志与结算（先卖出再判定出局）。  
+6) `[x]` **Fast Track 事件表**：已由 `lib/data/fastTrackEvents.ts` 数据驱动（Opportunity/IPO/Donation/Penalty/Doodad/Dream + CashFlow Day），并在结算日志中写入 `eventId/legacyKey` 便于复盘。  
+7) `[x]` **外圈现金不足处理**：已实现 v1.0 的清算窗口（`liquidationRate=0.5`），支持逐笔卖出资产写日志；清算后支付成功则扣款并记录日志，否则破产出局并写入失败/破产日志。  
 8) `[ ]` **Dream perk（可选）**：`lib/data/scenarios.ts` 已有 `perk` 文案，但未落地；若要实现必须定义触发时机与数值效果。
 9) `[ ]` **Offer 特例：卖方融资/延期结算（可选）**：以 `offer28` 为代表；若要支持需先定义“应收票据/期限/到期收款”的状态与回合推进口径，并补齐可复盘日志。
 
