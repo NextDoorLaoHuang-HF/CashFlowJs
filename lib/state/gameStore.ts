@@ -2626,7 +2626,7 @@ export const useGameStore = create<GameStore>((set, get) => {
       }))
     };
 
-    let outcome:
+    type AddJointVentureOutcome =
       | {
           ok: true;
           ventureId: string;
@@ -2640,8 +2640,9 @@ export const useGameStore = create<GameStore>((set, get) => {
           participants: Array<{ playerId: string; contribution: number; equity: number }>;
           missingPlayers?: string[];
           insufficientCash?: Array<{ playerId: string; required: number; cashAvailable: number; shortfall: number }>;
-        }
-      | null = null;
+        };
+
+    let outcome = null as AddJointVentureOutcome | null;
 
     set(
       produce<GameStore>((draft) => {
@@ -2766,7 +2767,7 @@ export const useGameStore = create<GameStore>((set, get) => {
     const lenderId = loanInput.lenderId;
     const borrowerId = loanInput.borrowerId;
 
-    let outcome:
+    type AddLoanOutcome =
       | {
           ok: true;
           loan: PlayerLoan;
@@ -2783,8 +2784,9 @@ export const useGameStore = create<GameStore>((set, get) => {
           lenderCash?: number;
           borrowerCash?: number;
           shortfall?: number;
-        }
-      | null = null;
+        };
+
+    let outcome = null as AddLoanOutcome | null;
 
     set(
       produce<GameStore>((draft) => {
@@ -2874,7 +2876,7 @@ export const useGameStore = create<GameStore>((set, get) => {
     const requested = normalizeMoney(amount);
     if (!loanId || requested <= 0) return;
 
-    let outcome:
+    type RepayLoanOutcome =
       | {
           ok: true;
           loanId: string;
@@ -2898,8 +2900,9 @@ export const useGameStore = create<GameStore>((set, get) => {
           lenderId?: string;
           cashAvailable?: number;
           shortfall?: number;
-        }
-      | null = null;
+        };
+
+    let outcome = null as RepayLoanOutcome | null;
 
     set(
       produce<GameStore>((draft) => {
@@ -3299,10 +3302,11 @@ export const useGameStore = create<GameStore>((set, get) => {
     const playerId = session.playerId;
     const requiredCash = session.requiredCash;
 
-    let settled:
+    type LiquidationSettlement =
       | { ok: true; cashBefore: number; cashAfter: number; requiredCash: number; reason: LiquidationSessionReason }
-      | { ok: false; requiredCash: number; cashAvailable: number; shortfall: number; track: Player["track"]; reason: LiquidationSessionReason }
-      | null = null;
+      | { ok: false; requiredCash: number; cashAvailable: number; shortfall: number; track: Player["track"]; reason: LiquidationSessionReason };
+
+    let settled = null as LiquidationSettlement | null;
 
     set(
       produce<GameStore>((draft) => {
