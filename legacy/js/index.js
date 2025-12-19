@@ -143,15 +143,12 @@ var APP = APP || {
 
                 // Send list of players to board
                 var tableId = document.getElementById("player-list-table");
-                tableId.insertAdjacentHTML(
-                    "beforeend",
-                    "<div class='table-row-player' id='table-row-player" +
-                    parseInt(i, 10) +
-                    "'> " +
-                    playerObj.name +
-                    " </div>"
-                    );
-                    APP.display.updatePlayerColor('table row', i)
+                var tableRowElement = document.createElement("div");
+                tableRowElement.className = "table-row-player";
+                tableRowElement.id = "table-row-player" + parseInt(i, 10);
+                tableRowElement.textContent = playerObj.name;
+                tableId.appendChild(tableRowElement);
+                APP.display.updatePlayerColor('table row', i);
 
             }
 
@@ -206,14 +203,11 @@ var APP = APP || {
 
             for(var i = 0; i < APP.players.length; i++){
                 var tableId = document.getElementById("player-list-table");
-                tableId.insertAdjacentHTML(
-                    "beforeend",
-                    "<div class='table-row-player' id='table-row-player" +
-                    parseInt(i + 1, 10) +
-                    "'> " +
-                    APP.players[i]['name'] +
-                    " </div>"
-                );
+                var tableRowElement = document.createElement("div");
+                tableRowElement.className = "table-row-player";
+                tableRowElement.id = "table-row-player" + parseInt(i + 1, 10);
+                tableRowElement.textContent = APP.players[i]['name'];
+                tableId.appendChild(tableRowElement);
             }
 
             $("#game-menu").show();
@@ -258,8 +252,9 @@ var APP = APP || {
     },
     rollDie: function(dieCount) {
         var dieTotal = 0;
+        var diceToRoll = Number(dieCount) || 1;
 		
-		for (i = 1; i <= dieCount; i++) {
+		for (var i = 1; i <= diceToRoll; i++) {
 			var die = Math.floor(Math.random() * 6) + 1;		
 			dieTotal += die;
 		}
@@ -272,14 +267,20 @@ var APP = APP || {
         var pObj = APP.players[player];
         var previousPosition = pObj.position;
         var dice;
+        var diceToRoll = Number(dieCount) || 1;
 		var manualDice = document.getElementById("manual-dice-input");
 		
 		if (OPTIONS.manualDice.checked == true){
 			//show dice input
-			dice = manualDice.value;
+            var parsedDice = parseInt(manualDice.value, 10);
+            if (isNaN(parsedDice) || parsedDice < 1) {
+                parsedDice = 1;
+            }
+            manualDice.value = parsedDice;
+			dice = parsedDice;
 		} else {
 			
-			dice = this.rollDie(dieCount);
+			dice = this.rollDie(diceToRoll);
 		}
 		
         // show rolled dice info
@@ -319,13 +320,14 @@ var APP = APP || {
         // When player lands on square load card
         APP.loadCard(currentPosition);
 
-        // If pass paycheck get payday - currently set to salary
-        if (previousPosition < 5 && currentPosition >= 5) {
-            pObj.cash += pObj.payday;
-        } else if (previousPosition < 13 && currentPosition >= 13) {
-            pObj.cash += pObj.payday;
-        } else if (previousPosition < 21 && currentPosition + dice >= 21) {
-            pObj.cash += pObj.payday;
+        var boardSize = 23;
+        var paycheckSquares = [5, 13, 21];
+        var stepsToMove = Number(dice);
+        for (var step = 1; step <= stepsToMove; step++) {
+            var landingPos = ((previousPosition - 1 + step) % boardSize) + 1;
+            if (paycheckSquares.indexOf(landingPos) !== -1) {
+                pObj.cash += pObj.payday;
+            }
         }
 
         APP.finance.statement();
@@ -442,8 +444,8 @@ var APP = APP || {
             $(coinRowClass).show();
         }
 
-        document.getElementById("player-name").innerHTML = APP.players[APP.currentPlayerArrPos()]['name'];
-        document.getElementById("ft-player-name").innerHTML = APP.players[APP.currentPlayerArrPos()]['name'];
+        document.getElementById("player-name").textContent = APP.players[APP.currentPlayerArrPos()]['name'];
+        document.getElementById("ft-player-name").textContent = APP.players[APP.currentPlayerArrPos()]['name'];
         
         APP.turnCount++;
 
@@ -1078,8 +1080,8 @@ APP.finance = {
                 $("#end-turn-btn").hide();
                 $("#fast-track-option-card").hide();
 
-                document.getElementById("ftic-player-name").innerHTML = APP.name(APP.currentPlayer);
-                document.getElementById("ftic-player-name-intro").innerHTML = APP.name(APP.currentPlayer);
+                document.getElementById("ftic-player-name").textContent = APP.name(APP.currentPlayer);
+                document.getElementById("ftic-player-name-intro").textContent = APP.name(APP.currentPlayer);
                 $("#ftic-ok-btn").show();
                 $("#ft-enter-btn").show();
             }
