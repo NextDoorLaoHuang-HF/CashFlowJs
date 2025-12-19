@@ -145,7 +145,7 @@ type GameStore = {
 };
 
 const defaultSettings: GameSettings = {
-  locale: "en",
+  locale: "zh",
   startingSavingsMode: "normal",
   enablePreferredStock: true,
   enableBigDeals: true,
