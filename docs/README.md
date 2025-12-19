@@ -31,7 +31,7 @@ Open http://localhost:3000 to start the new experience.
 
 The LLM helper looks for `OPENAI_API_KEY`. You can either:
 
-- set `OPENAI_API_KEY` in `.env.local`, or
+- copy `.env.example` to `.env.local` and set `OPENAI_API_KEY`, or
 - provide a temporary key inside the “LLM Player Console” before running a prompt.
 
 ## Project Structure
@@ -62,4 +62,3 @@ legacy/              Original static assets for reference
   - `docs/legacy-rules-baseline.md` (legacy behavior baseline, Chinese)
 
 This remains a fan-made project inspired by CashFlow 101. The game mechanics are for educational purposes only and the CashFlow trademark belongs to its respective owner.
-

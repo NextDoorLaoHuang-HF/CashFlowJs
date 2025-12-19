@@ -31,7 +31,7 @@ npm run dev
 
 LLM 助手需要 `OPENAI_API_KEY`。你可以：
 
-- 在 `.env.local` 中设置 `OPENAI_API_KEY`，或者
+- 复制 `.env.example` 为 `.env.local`，并在其中设置 `OPENAI_API_KEY`，或者
 - 在"LLM 玩家控制台"中提供临时密钥后再运行提示。
 
 ## 项目结构
@@ -62,4 +62,3 @@ legacy/              原始静态资源（供参考）
   - `docs/legacy-rules-baseline.md`（旧版行为基准 / 仅供对照）
 
 本项目仍然是一个受 CashFlow 101 启发的粉丝制作项目。游戏机制仅供教育目的使用，CashFlow 商标归其各自所有者所有。
-
