@@ -2605,32 +2605,123 @@ export const useGameStore = create<GameStore>((set, get) => {
     );
   },
   addJointVenture: (ventureInput) => {
+    const normalizeMoney = (value: unknown): number => {
+      const raw = typeof value === "number" ? value : Number(value);
+      if (!Number.isFinite(raw)) return 0;
+      return Math.max(0, Math.round(raw));
+    };
+
     const venture: JointVenture = {
       ...ventureInput,
+      cashNeeded: normalizeMoney(ventureInput.cashNeeded),
+      cashflowImpact: Number.isFinite(ventureInput.cashflowImpact) ? Math.round(ventureInput.cashflowImpact) : 0,
       id: uuid(),
       status: "forming",
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      participants: (ventureInput.participants ?? []).map((participant) => ({
+        ...participant,
+        contribution: normalizeMoney(participant.contribution),
+        equity: Number.isFinite(participant.equity) ? participant.equity : 0
+      }))
     };
+
+    let outcome:
+      | {
+          ok: true;
+          ventureId: string;
+          cashNeeded: number;
+          participants: Array<{ playerId: string; contribution: number; equity: number; cashBefore: number; cashAfter: number }>;
+        }
+      | {
+          ok: false;
+          reason: string;
+          cashNeeded: number;
+          participants: Array<{ playerId: string; contribution: number; equity: number }>;
+          missingPlayers?: string[];
+          insufficientCash?: Array<{ playerId: string; required: number; cashAvailable: number; shortfall: number }>;
+        }
+      | null = null;
+
     set(
       produce<GameStore>((draft) => {
-        venture.participants.forEach((participant) => {
-          const player = draft.players.find((p) => p.id === participant.playerId);
-          if (player) {
-            player.cash -= participant.contribution;
+        const participants = venture.participants;
+        if (participants.length === 0) {
+          outcome = { ok: false, reason: "noParticipants", cashNeeded: venture.cashNeeded, participants: [] };
+          return;
+        }
+
+        const requiredByPlayerId = new Map<string, number>();
+        participants.forEach((participant) => {
+          const playerId = participant.playerId;
+          if (!playerId) return;
+          const required = normalizeMoney(participant.contribution);
+          if (required <= 0) return;
+          requiredByPlayerId.set(playerId, (requiredByPlayerId.get(playerId) ?? 0) + required);
+        });
+
+        const missingPlayers: string[] = [];
+        const insufficientCash: Array<{ playerId: string; required: number; cashAvailable: number; shortfall: number }> = [];
+        requiredByPlayerId.forEach((required, playerId) => {
+          const player = draft.players.find((candidate) => candidate.id === playerId);
+          if (!player) {
+            missingPlayers.push(playerId);
+            return;
+          }
+          const cashAvailable = player.cash;
+          if (cashAvailable < required) {
+            insufficientCash.push({ playerId, required, cashAvailable, shortfall: required - cashAvailable });
           }
         });
+
+        if (missingPlayers.length > 0 || insufficientCash.length > 0) {
+          outcome = {
+            ok: false,
+            reason: missingPlayers.length > 0 ? "missingPlayers" : "insufficientCash",
+            cashNeeded: venture.cashNeeded,
+            participants: participants.map((participant) => ({
+              playerId: participant.playerId,
+              contribution: normalizeMoney(participant.contribution),
+              equity: Number.isFinite(participant.equity) ? participant.equity : 0
+            })),
+            missingPlayers: missingPlayers.length > 0 ? missingPlayers : undefined,
+            insufficientCash: insufficientCash.length > 0 ? insufficientCash : undefined
+          };
+          return;
+        }
+
+        const participantSnapshots: Array<{ playerId: string; contribution: number; equity: number; cashBefore: number; cashAfter: number }> = [];
+        participants.forEach((participant) => {
+          const player = draft.players.find((candidate) => candidate.id === participant.playerId);
+          if (!player) return;
+          const contribution = normalizeMoney(participant.contribution);
+          const cashBefore = player.cash;
+          player.cash -= contribution;
+          participantSnapshots.push({
+            playerId: participant.playerId,
+            contribution,
+            equity: Number.isFinite(participant.equity) ? participant.equity : 0,
+            cashBefore,
+            cashAfter: player.cash
+          });
+        });
+
         draft.ventures.push(venture);
+        outcome = { ok: true, ventureId: venture.id, cashNeeded: venture.cashNeeded, participants: participantSnapshots };
       })
     );
-    get().addLog("log.ventures.created", {
-      ventureId: venture.id,
-      cashNeeded: venture.cashNeeded,
-      participants: venture.participants.map((participant) => ({
-        playerId: participant.playerId,
-        contribution: participant.contribution,
-        equity: participant.equity
-      }))
-    });
+
+    if (!outcome) return;
+    if (outcome.ok) {
+      get().addLog("log.ventures.created", {
+        ventureId: outcome.ventureId,
+        cashNeeded: outcome.cashNeeded,
+        cashflowImpact: venture.cashflowImpact,
+        participants: outcome.participants
+      });
+      return;
+    }
+
+    get().addLog("log.ventures.createFailed", outcome);
   },
   updateJointVenture: (id, updates) => {
     const beforeStatus = captureFastTrackStatus(get().players);
@@ -2663,63 +2754,220 @@ export const useGameStore = create<GameStore>((set, get) => {
     }
   },
   addLoan: (loanInput) => {
-    let createdLoan: PlayerLoan | undefined;
-    let lenderName: string | undefined;
-    let borrowerName: string | undefined;
+    const normalizeMoney = (value: unknown): number => {
+      const raw = typeof value === "number" ? value : Number(value);
+      if (!Number.isFinite(raw)) return 0;
+      return Math.max(0, Math.round(raw));
+    };
+
+    const principal = normalizeMoney(loanInput.principal);
+    const rate = Number.isFinite(loanInput.rate) ? Math.round(loanInput.rate) : 0;
+    const lenderId = loanInput.lenderId;
+    const borrowerId = loanInput.borrowerId;
+
+    let outcome:
+      | {
+          ok: true;
+          loan: PlayerLoan;
+          lender: { id: string; name: string; cashBefore: number; cashAfter: number };
+          borrower: { id: string; name: string; cashBefore: number; cashAfter: number };
+        }
+      | {
+          ok: false;
+          reason: string;
+          lenderId: string;
+          borrowerId: string;
+          principal: number;
+          rate: number;
+          lenderCash?: number;
+          borrowerCash?: number;
+          shortfall?: number;
+        }
+      | null = null;
+
     set(
       produce<GameStore>((draft) => {
-        const lender = draft.players.find((p) => p.id === loanInput.lenderId);
-        const borrower = draft.players.find((p) => p.id === loanInput.borrowerId);
-        if (!lender || !borrower) return;
-        lender.cash -= loanInput.principal;
-        borrower.cash += loanInput.principal;
+        if (!lenderId || !borrowerId || lenderId === borrowerId) {
+          outcome = { ok: false, reason: "invalidParties", lenderId, borrowerId, principal, rate };
+          return;
+        }
+        if (principal <= 0) {
+          outcome = { ok: false, reason: "invalidPrincipal", lenderId, borrowerId, principal, rate };
+          return;
+        }
+
+        const lender = draft.players.find((player) => player.id === lenderId);
+        const borrower = draft.players.find((player) => player.id === borrowerId);
+        if (!lender || !borrower) {
+          outcome = { ok: false, reason: "missingPlayer", lenderId, borrowerId, principal, rate };
+          return;
+        }
+
+        const lenderCashBefore = lender.cash;
+        const borrowerCashBefore = borrower.cash;
+        if (lenderCashBefore < principal) {
+          outcome = {
+            ok: false,
+            reason: "insufficientCash",
+            lenderId,
+            borrowerId,
+            principal,
+            rate,
+            lenderCash: lenderCashBefore,
+            borrowerCash: borrowerCashBefore,
+            shortfall: principal - lenderCashBefore
+          };
+          return;
+        }
+
+        lender.cash -= principal;
+        borrower.cash += principal;
         const loan: PlayerLoan = {
-          ...loanInput,
           id: uuid(),
-          status: "active",
-          remaining: loanInput.principal
+          lenderId,
+          borrowerId,
+          principal,
+          rate,
+          remaining: principal,
+          issuedTurn: typeof draft.turn === "number" && Number.isFinite(draft.turn) ? draft.turn : loanInput.issuedTurn,
+          status: "active"
         };
-        lenderName = lender.name;
-        borrowerName = borrower.name;
         draft.loans.push(loan);
-        createdLoan = loan;
+        outcome = {
+          ok: true,
+          loan,
+          lender: { id: lender.id, name: lender.name, cashBefore: lenderCashBefore, cashAfter: lender.cash },
+          borrower: { id: borrower.id, name: borrower.name, cashBefore: borrowerCashBefore, cashAfter: borrower.cash }
+        };
       })
     );
-    if (createdLoan) {
+
+    if (!outcome) return;
+    if (outcome.ok) {
       get().addLog("log.loans.created", {
-        loanId: createdLoan.id,
-        principal: createdLoan.principal,
-        lender: lenderName,
-        borrower: borrowerName
+        loanId: outcome.loan.id,
+        lenderId: outcome.lender.id,
+        borrowerId: outcome.borrower.id,
+        lender: outcome.lender.name,
+        borrower: outcome.borrower.name,
+        principal: outcome.loan.principal,
+        rate: outcome.loan.rate,
+        issuedTurn: outcome.loan.issuedTurn,
+        cashDelta: {
+          lender: { before: outcome.lender.cashBefore, after: outcome.lender.cashAfter },
+          borrower: { before: outcome.borrower.cashBefore, after: outcome.borrower.cashAfter }
+        }
       });
+      return;
     }
+
+    get().addLog("log.loans.createFailed", outcome);
   },
   repayLoan: (loanId, amount) => {
-    let repaymentAmount = 0;
-    let remainingBalance = 0;
+    const normalizeMoney = (value: unknown): number => {
+      const raw = typeof value === "number" ? value : Number(value);
+      if (!Number.isFinite(raw)) return 0;
+      return Math.max(0, Math.round(raw));
+    };
+
+    const requested = normalizeMoney(amount);
+    if (!loanId || requested <= 0) return;
+
+    let outcome:
+      | {
+          ok: true;
+          loanId: string;
+          lenderId: string;
+          borrowerId: string;
+          requested: number;
+          paid: number;
+          remaining: number;
+          borrowerCashBefore: number;
+          borrowerCashAfter: number;
+          lenderCashBefore: number;
+          lenderCashAfter: number;
+        }
+      | {
+          ok: false;
+          reason: string;
+          loanId: string;
+          requested: number;
+          remaining?: number;
+          borrowerId?: string;
+          lenderId?: string;
+          cashAvailable?: number;
+          shortfall?: number;
+        }
+      | null = null;
+
     set(
       produce<GameStore>((draft) => {
-        const loan = draft.loans.find((l) => l.id === loanId);
-        if (!loan || loan.status !== "active") return;
-        const lender = draft.players.find((p) => p.id === loan.lenderId);
-        const borrower = draft.players.find((p) => p.id === loan.borrowerId);
-        if (!lender || !borrower) return;
-        const payment = Math.min(amount, loan.remaining);
-        if (payment <= 0) return;
+        const loan = draft.loans.find((candidate) => candidate.id === loanId);
+        if (!loan || loan.status !== "active") {
+          outcome = { ok: false, reason: "missingLoan", loanId, requested };
+          return;
+        }
+        const lender = draft.players.find((player) => player.id === loan.lenderId);
+        const borrower = draft.players.find((player) => player.id === loan.borrowerId);
+        if (!lender || !borrower) {
+          outcome = { ok: false, reason: "missingPlayer", loanId, requested, lenderId: loan.lenderId, borrowerId: loan.borrowerId, remaining: loan.remaining };
+          return;
+        }
+
+        const payment = Math.min(requested, normalizeMoney(loan.remaining));
+        if (payment <= 0) {
+          outcome = { ok: false, reason: "invalidPayment", loanId, requested, lenderId: loan.lenderId, borrowerId: loan.borrowerId, remaining: loan.remaining };
+          return;
+        }
+
+        const borrowerCashBefore = borrower.cash;
+        if (borrowerCashBefore < payment) {
+          outcome = {
+            ok: false,
+            reason: "insufficientCash",
+            loanId,
+            requested,
+            remaining: loan.remaining,
+            borrowerId: borrower.id,
+            lenderId: lender.id,
+            cashAvailable: borrowerCashBefore,
+            shortfall: payment - borrowerCashBefore
+          };
+          return;
+        }
+
+        const lenderCashBefore = lender.cash;
         borrower.cash -= payment;
         lender.cash += payment;
         loan.remaining -= payment;
-        repaymentAmount = payment;
-        remainingBalance = loan.remaining;
         if (loan.remaining <= 0) {
           loan.remaining = 0;
           loan.status = "repaid";
         }
+
+        outcome = {
+          ok: true,
+          loanId: loan.id,
+          lenderId: lender.id,
+          borrowerId: borrower.id,
+          requested,
+          paid: payment,
+          remaining: loan.remaining,
+          borrowerCashBefore,
+          borrowerCashAfter: borrower.cash,
+          lenderCashBefore,
+          lenderCashAfter: lender.cash
+        };
       })
     );
-    if (repaymentAmount > 0) {
-      get().addLog("log.loans.repaid", { loanId, amount: repaymentAmount, remaining: remainingBalance });
+
+    if (!outcome) return;
+    if (outcome.ok) {
+      get().addLog("log.loans.repaid", { loanId: outcome.loanId, amount: outcome.paid, remaining: outcome.remaining, requested: outcome.requested });
+      return;
     }
+
+    get().addLog("log.loans.repayFailed", outcome);
   },
   repayBankLoan: (liabilityId, amount) => {
     const state = get();
