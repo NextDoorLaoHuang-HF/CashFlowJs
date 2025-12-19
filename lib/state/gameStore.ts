@@ -134,6 +134,7 @@ type GameStore = {
   addLoan: (loan: Omit<PlayerLoan, "id" | "status" | "remaining">) => void;
   repayLoan: (loanId: string, amount: number) => void;
   repayBankLoan: (liabilityId: string, amount: number) => void;
+  sellFireSaleAsset: (assetId: string, quantity: number) => void;
   clearLog: () => void;
   recordLLMAction: (playerId: string, action: LLMAction) => void;
   donateCharity: () => void;
@@ -3023,6 +3024,95 @@ export const useGameStore = create<GameStore>((set, get) => {
         { loanId: liabilityId, amount: repaid, remaining, previousPayment, updatedPayment },
         state.currentPlayerId
       );
+    }
+  },
+  sellFireSaleAsset: (assetId, quantity) => {
+    const state = get();
+    if (state.phase === "setup" || state.phase === "finished") return;
+    if (!state.currentPlayerId) return;
+    if (
+      state.turnState === "awaitCard" ||
+      state.turnState === "awaitMarket" ||
+      state.turnState === "awaitCharity" ||
+      state.turnState === "awaitLiquidation"
+    )
+      return;
+    if (state.selectedCard) return;
+    if (state.charityPrompt && state.charityPrompt.playerId === state.currentPlayerId) return;
+
+    const playerId = state.currentPlayerId;
+    let salePayload: Record<string, unknown> | null = null;
+
+    set(
+      produce<GameStore>((draft) => {
+        const player = draft.players.find((p) => p.id === playerId);
+        if (!player || player.track !== "ratRace" || player.status === "bankrupt") return;
+
+        const assetIndex = player.assets.findIndex((asset) => asset.id === assetId);
+        if (assetIndex < 0) return;
+        const asset = player.assets[assetIndex];
+        if (!asset) return;
+
+        const totalQty = getAssetAvailableQuantity(asset);
+        const rawQty = typeof quantity === "number" ? quantity : Number(quantity);
+        if (!Number.isFinite(rawQty)) return;
+        const sellQty = Math.min(Math.max(1, Math.floor(rawQty)), totalQty);
+        if (sellQty <= 0) return;
+
+        const fraction = totalQty > 0 ? sellQty / totalQty : 1;
+        const soldCost = Math.round(asset.cost * fraction);
+        const soldCashflow = Math.round(asset.cashflow * fraction);
+        const liquidationRate = 0.5;
+        const proceeds = Math.max(Math.round(soldCost * liquidationRate), 0);
+
+        const cashBefore = player.cash;
+        const passiveBefore = player.passiveIncome;
+
+        player.cash += proceeds;
+        player.passiveIncome -= soldCashflow;
+
+        const remainingQty = totalQty - sellQty;
+        if (remainingQty <= 0 || totalQty === 1) {
+          player.assets.splice(assetIndex, 1);
+        } else {
+          player.assets[assetIndex] = {
+            ...asset,
+            quantity: remainingQty,
+            cost: asset.cost - soldCost,
+            cashflow: asset.cashflow - soldCashflow
+          };
+        }
+
+        recalcPlayerIncome(player);
+
+        const updatedAsset = remainingQty > 0 ? player.assets.find((candidate) => candidate.id === assetId) : undefined;
+        salePayload = {
+          asset: { id: asset.id, name: asset.name, category: asset.category },
+          sellQty,
+          totalQty,
+          soldCost,
+          soldCashflow,
+          liquidationRate,
+          proceeds,
+          remaining:
+            updatedAsset && remainingQty > 0
+              ? {
+                  qty: remainingQty,
+                  cost: updatedAsset.cost,
+                  cashflow: updatedAsset.cashflow
+                }
+              : null,
+          cashBefore,
+          cashAfter: player.cash,
+          passiveIncomeBefore: passiveBefore,
+          passiveIncomeAfter: player.passiveIncome,
+          track: player.track
+        };
+      })
+    );
+
+    if (salePayload) {
+      state.addLog("log.ratRace.fireSale.assetSold", salePayload, playerId);
     }
   },
 	clearLog: () => {

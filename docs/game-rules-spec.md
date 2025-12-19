@@ -113,7 +113,7 @@
 6) **玩家操作窗口（如需要）**
    - Opportunity：选择 Small/Big 并决定买或不买  
    - Offer/Stock：进入“响应窗口”（若实现全员响应）  
-   - 回合结束：可选择还款/借款（仅内圈允许银行借款）  
+   - 回合结束：可选择还款/借款/主动清算（仅内圈允许银行借款；主动清算见 4.2）  
 7) **回合结束**
    - 轮到下一位玩家；若满足进入外圈条件，允许点击 Enter Fast Track。
 
@@ -156,6 +156,22 @@
 - 结算成功后：`skipTurns = 3`（接下来 3 个轮到你的回合会被跳过）。  
 - v1.0 不实现保险豁免（保险作为扩展项）。
 
+### 4.2 主动清算（Fire Sale，v1.0 定案）
+
+> 说明：内圈默认允许银行贷款覆盖“强制支付/买入”的现金缺口（见 5.1.3），因此主动清算并非强制流程，而是给玩家一个“去杠杆/腾挪现金/还债”的策略工具。
+
+- 时机：仅限当前玩家、且 `track="ratRace"` 时；在自己的回合内，只要不处于卡牌处理/响应窗口（如 `awaitCard/awaitMarket/awaitCharity`）等阻塞状态，即可从资产面板发起主动清算。  
+- 可卖范围：玩家 `assets` 中的任意资产条目（不区分类别）。  
+- 数量规则：  
+  - 若资产有 `quantity`：允许卖出 `sellQty ∈ [1, quantity]`（可多次分批卖）。  
+  - 若资产无 `quantity`：视为 `quantity = 1`，只能整项卖出。  
+- 估值口径（折价）：`liquidationRate = 0.5`。对任意资产，令 `totalQty = max(1, floor(quantity))`，卖出 `sellQty`：  
+  - `soldCost = round(asset.cost * (sellQty / totalQty))`  
+  - `soldCashflow = round(asset.cashflow * (sellQty / totalQty))`  
+  - `proceeds = max(round(soldCost * liquidationRate), 0)`  
+  - 结算影响：`cash += proceeds`，`passiveIncome -= soldCashflow`，并更新资产剩余（同 6.6.3）。  
+- 与 Offer Settlement 的关系：主动清算不依赖市场牌价格，也不做 `salePrice - mortgageBalance` 结算；对带 `mortgage` 的资产（如房产）仍仅按 `asset.cost` 折价清算（因为 `cost` 已代表投入成本/权益）。
+
 ---
 
 ## 5. 卡牌规则（内圈 4 类牌堆）
@@ -181,8 +197,10 @@
   - 注意：若未来实现“卖出公司”，需定义对应 Offer 或估值规则（v1.0 暂不强制）。
 
 - **Stock / Mutual Fund / Preferred Stock / CD**
-  - 买入：按 `shares * price` 支付现金；支持叠加同 `id/symbol+price` 的持仓数量。  
-  - 收入：仅 Preferred Stock / CD 的 `dividend` 产生被动收入（`dividend * shares`）。普通股票/基金不产生被动收入。  
+  - 持仓：同一 `symbol` 的持仓在资产表中合并为一个条目（`quantity = shares`）。为便于展示与复盘，建议在 `metadata` 中保留 `symbol`、`securityType`、`dividendPerShare`。  
+  - 买入：按 `shares * price` 支付现金；同一 `symbol` 的持仓执行 `quantity += shares`、`cost += shares * price`（成本累加）。  
+  - 卖出：允许按股数部分卖出；卖出后 `cost` 按比例扣减：`soldCost = round(cost * (sellShares / totalShares))`，剩余 `cost -= soldCost`；若卖光则移除条目。  
+  - 收入：仅 Preferred Stock / CD 的 `dividendPerShare` 产生被动收入（`dividendPerShare * shares`）。普通股票/基金不产生被动收入。  
   - Split/Reverse Split：只改变股数，不改变现金；Reverse Split 必须保持整数股（向下取整或禁止奇数股，需在实现中定案；v1.0：**向下取整**）。
 
 - **Coin（收藏品）**
@@ -363,7 +381,7 @@
 
 > 状态约定：`[ ]` 未完成；`[x]` 已完成；`[~]` 部分完成（仍需补交互/日志/边界）。
 
-1) `[~]` **资产/负债报表 UI**：已提供资产/负债面板（含银行贷款/玩家借款还款入口）；若需要“主动清算/卖出”则必须先在规则层定义折价与可卖范围。  
+1) `[x]` **资产/负债报表 UI**：已提供资产/负债面板（含银行贷款/玩家借款还款入口）并支持内圈“主动清算/折价卖出”（见 4.2）。  
 2) `[x]` **Offer/Stock 的全员响应窗口**：按回合顺序逐人确认；卖出选择与买入数量写入日志，可复盘。  
 3) `[x]` **Offer 的“选择卖出哪一项资产”**：Market 窗口按资产条目与数量选择，避免“自动卖出全部”。  
 4) `[x]` **银行贷款还款**：支持按 1000 为步长还本金，并按 `payment = round(balance * 0.1)` 自动重算月供。  

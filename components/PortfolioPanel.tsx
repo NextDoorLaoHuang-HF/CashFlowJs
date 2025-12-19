@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useGameStore } from "../lib/state/gameStore";
 import { t } from "../lib/i18n";
 import type { Asset, Liability, PlayerLoan } from "../lib/types";
@@ -30,20 +30,23 @@ const getLoanCounterparty = (loan: PlayerLoan, players: Array<{ id: string; name
 };
 
 export function PortfolioPanel() {
-  const { players, currentPlayerId, settings, turnState, repayBankLoan, loans, repayLoan } = useGameStore((state) => ({
+  const { players, currentPlayerId, settings, turnState, repayBankLoan, loans, repayLoan, sellFireSaleAsset } = useGameStore((state) => ({
     players: state.players,
     currentPlayerId: state.currentPlayerId,
     settings: state.settings,
     turnState: state.turnState,
     repayBankLoan: state.repayBankLoan,
     loans: state.loans,
-    repayLoan: state.repayLoan
+    repayLoan: state.repayLoan,
+    sellFireSaleAsset: state.sellFireSaleAsset
   }));
 
   const currentPlayer = useMemo(
     () => players.find((player) => player.id === currentPlayerId),
     [players, currentPlayerId]
   );
+
+  const [fireSaleQuantities, setFireSaleQuantities] = useState<Record<string, number>>({});
 
   const assetsByCategory = useMemo(() => groupAssetsByCategory(currentPlayer?.assets ?? []), [currentPlayer?.assets]);
 
@@ -69,12 +72,22 @@ export function PortfolioPanel() {
 
   const canRepayNow = turnState === "awaitEnd";
   const showLoanActions = currentPlayer.track === "ratRace";
+  const canFireSaleNow =
+    currentPlayer.track === "ratRace" &&
+    turnState !== "awaitCard" &&
+    turnState !== "awaitMarket" &&
+    turnState !== "awaitCharity" &&
+    turnState !== "awaitLiquidation" &&
+    currentPlayer.status !== "bankrupt";
 
   const renderAssetRow = (asset: Asset) => {
     const quantity = typeof asset.quantity === "number" && Number.isFinite(asset.quantity) ? Math.floor(asset.quantity) : 1;
     const symbol = typeof asset.metadata?.symbol === "string" ? asset.metadata.symbol : undefined;
     const units = getNumberFromMetadata(asset.metadata?.units);
     const mortgage = getNumberFromMetadata(asset.metadata?.mortgage);
+
+    const sellQtyRaw = fireSaleQuantities[asset.id];
+    const sellQty = Math.min(Math.max(1, Number.isFinite(sellQtyRaw) ? Math.floor(sellQtyRaw) : 1), quantity);
 
     return (
       <div key={asset.id} style={{ padding: "0.55rem 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
@@ -108,6 +121,44 @@ export function PortfolioPanel() {
             </>
           )}
         </dl>
+
+        {canFireSaleNow && (
+          <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.4rem", alignItems: "center" }}>
+            {quantity > 1 && (
+              <input
+                type="number"
+                min={1}
+                max={quantity}
+                value={sellQty}
+                onChange={(e) => {
+                  const next = Number(e.target.value);
+                  setFireSaleQuantities((prev) => ({ ...prev, [asset.id]: Number.isFinite(next) ? next : 1 }));
+                }}
+                aria-label={t(settings.locale, "portfolio.fireSale.quantity")}
+                style={{
+                  width: "110px",
+                  borderRadius: 10,
+                  padding: "0.4rem 0.6rem",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                  background: "rgba(255,255,255,0.04)",
+                  color: "#fff"
+                }}
+              />
+            )}
+            <button
+              onClick={() => sellFireSaleAsset(asset.id, sellQty)}
+              style={{
+                flex: 1,
+                borderRadius: 10,
+                padding: "0.4rem 0.75rem",
+                background: "rgba(251, 113, 133, 0.2)",
+                color: "#fff"
+              }}
+            >
+              {t(settings.locale, "portfolio.fireSale.sell")}
+            </button>
+          </div>
+        )}
       </div>
     );
   };
@@ -188,6 +239,11 @@ export function PortfolioPanel() {
         <summary style={{ cursor: "pointer" }}>
           {t(settings.locale, "portfolio.assets.title")} · {currentPlayer.assets.length}
         </summary>
+        {currentPlayer.track === "ratRace" && (
+          <p style={{ margin: "0.35rem 0 0", color: "var(--muted)", fontSize: "0.85rem" }}>
+            {t(settings.locale, "portfolio.fireSale.hint")}
+          </p>
+        )}
         {currentPlayer.assets.length === 0 ? (
           <p style={{ margin: "0.5rem 0 0", color: "var(--muted)", fontSize: "0.9rem" }}>
             {t(settings.locale, "portfolio.assets.empty")}
@@ -311,4 +367,3 @@ export function PortfolioPanel() {
     </div>
   );
 }
-
