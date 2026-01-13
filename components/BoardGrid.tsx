@@ -23,7 +23,7 @@ export function BoardGrid() {
   }
 
   return (
-    <div className="card">
+    <div className="card" data-tour="board-grid">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
         <h3 style={{ margin: 0 }}>{t(settings.locale, "board.title")}</h3>
         {currentPlayerId && (

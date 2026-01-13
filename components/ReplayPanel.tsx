@@ -160,7 +160,7 @@ export function ReplayPanel() {
   };
 
   return (
-    <div className="card" style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+    <div className="card" style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }} data-tour="replay-panel">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.75rem", flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>{t(locale, "replay.title")}</h3>
         <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>

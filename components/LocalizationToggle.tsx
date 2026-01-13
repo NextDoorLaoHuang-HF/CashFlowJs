@@ -13,6 +13,7 @@ export function LocalizationToggle() {
 
   return (
     <button
+      data-tour="locale-toggle"
       onClick={() => setLocale(nextLocale)}
       style={{
         borderRadius: 999,

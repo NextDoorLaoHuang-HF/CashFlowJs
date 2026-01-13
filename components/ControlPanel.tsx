@@ -140,7 +140,7 @@ export function ControlPanel() {
 	  }, [marketSession, selectedCardId]);
 
   return (
-    <div className="card grid" style={{ gap: "0.8rem" }}>
+    <div className="card grid" style={{ gap: "0.8rem" }} data-tour="control-panel">
       <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
         <button
           onClick={rollDice}

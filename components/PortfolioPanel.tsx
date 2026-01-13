@@ -227,7 +227,7 @@ export function PortfolioPanel() {
   };
 
   return (
-    <div className="card grid" style={{ gap: "0.75rem" }}>
+    <div className="card grid" style={{ gap: "0.75rem" }} data-tour="portfolio-panel">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.75rem", flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>{t(settings.locale, "portfolio.title")}</h3>
         <div style={{ color: "var(--muted)", fontSize: "0.85rem" }}>

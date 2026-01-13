@@ -8,6 +8,7 @@ import { LLMPanel } from "../components/LLMPanel";
 import { LocalizationToggle } from "../components/LocalizationToggle";
 import { LoansPanel } from "../components/LoansPanel";
 import { PlayerSidebar } from "../components/PlayerSidebar";
+import { PlayerGuideEntry } from "../components/PlayerGuideEntry";
 import { PortfolioPanel } from "../components/PortfolioPanel";
 import { ReplayPanel } from "../components/ReplayPanel";
 import { SetupWizard } from "../components/SetupWizard";
@@ -29,7 +30,10 @@ export default function Page() {
           <h1 style={{ margin: 0 }}>{t(settings.locale, "app.title")}</h1>
           <p style={{ color: "var(--muted)", margin: "0.25rem 0 0" }}>{t(settings.locale, "app.subtitle")}</p>
         </div>
-        <LocalizationToggle />
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <PlayerGuideEntry />
+          <LocalizationToggle />
+        </div>
       </header>
 
       {phase === "setup" || players.length === 0 ? (

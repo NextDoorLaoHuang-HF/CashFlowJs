@@ -64,7 +64,7 @@ export function SetupWizard({ locale, initialSettings, onStart }: SetupWizardPro
       </div>
 
       {players.map((player, index) => (
-        <div key={index} className="card" style={{ background: "rgba(255,255,255,0.02)" }}>
+        <div key={index} className="card" style={{ background: "rgba(255,255,255,0.02)" }} data-tour="setup-player-card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
             <strong>{`${t(locale, "setup.playerName")} ${index + 1}`}</strong>
             {players.length > 1 && (
@@ -198,6 +198,7 @@ export function SetupWizard({ locale, initialSettings, onStart }: SetupWizardPro
 
       <div style={{ display: "flex", gap: "0.75rem" }}>
         <button
+          data-tour="setup-add-player"
           onClick={addPlayer}
           style={{
             padding: "0.65rem 1.25rem",
@@ -209,6 +210,7 @@ export function SetupWizard({ locale, initialSettings, onStart }: SetupWizardPro
           {t(locale, "setup.addPlayer")}
         </button>
         <button
+          data-tour="setup-start-game"
           onClick={() => onStart(players, settings)}
           disabled={dealsDisabled}
           style={{
@@ -224,7 +226,7 @@ export function SetupWizard({ locale, initialSettings, onStart }: SetupWizardPro
         </button>
       </div>
 
-      <div className="card" style={{ background: "rgba(255,255,255,0.02)", display: "grid", gap: "0.75rem" }}>
+      <div className="card" style={{ background: "rgba(255,255,255,0.02)", display: "grid", gap: "0.75rem" }} data-tour="setup-settings">
         <div>
           <strong>{t(locale, "setup.settings.title")}</strong>
           <p style={{ margin: "0.25rem 0 0", color: "var(--muted)", fontSize: "0.9rem" }}>{t(locale, "setup.settings.subtitle")}</p>

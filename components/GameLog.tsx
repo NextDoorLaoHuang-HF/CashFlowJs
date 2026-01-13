@@ -59,7 +59,7 @@ export function GameLog() {
   );
 
   return (
-    <div className="card" style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+    <div className="card" style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }} data-tour="game-log">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h3 style={{ margin: 0 }}>{t(settings.locale, "log.title")}</h3>
         <div style={{ display: "flex", gap: "0.5rem" }}>
