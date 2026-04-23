@@ -17,6 +17,7 @@ import {
   matchesOffer
 } from "../lib/state/marketRules";
 import { BottomSheet } from "./BottomSheet";
+import { DiceDisplay } from "./DiceDisplay";
 
 const deckLabels: Record<DeckKey, string> = {
   smallDeals: "controls.drawSmall",
@@ -87,6 +88,7 @@ export function ControlPanel() {
   }));
 
   const isMobile = useIsMobile();
+  const [diceRolling, setDiceRolling] = useState(false);
   const currentPlayer = useMemo(() => players.find((player) => player.id === currentPlayerId), [players, currentPlayerId]);
   const [liquidationQuantities, setLiquidationQuantities] = useState<Record<string, number>>({});
   const currentSquare = useMemo(() => {
@@ -138,7 +140,12 @@ export function ControlPanel() {
     if (!dice) return null;
     return (
       <div className="dice-row">
-        <span>🎲 {dice.dice.join(" + ")} = {dice.total}</span>
+        <DiceDisplay
+          dice={dice.dice}
+          total={dice.total}
+          isRolling={diceRolling}
+          size="md"
+        />
         <span className="text-muted text-sm">
           {t(settings.locale, "controls.playerId")}: {currentPlayerId?.slice(0, 4)}
         </span>
@@ -516,7 +523,16 @@ export function ControlPanel() {
   return (
     <div className="panel" data-tour="control-panel">
       <div className="action-row">
-        <button onClick={rollDice} disabled={!canRoll} className="btn btn-primary" style={{ flex: "1 1 150px" }}>
+        <button
+          onClick={() => {
+            setDiceRolling(true);
+            rollDice();
+            setTimeout(() => setDiceRolling(false), 600);
+          }}
+          disabled={!canRoll}
+          className="btn btn-primary"
+          style={{ flex: "1 1 150px" }}
+        >
           {t(settings.locale, "controls.roll")}
         </button>
         <button onClick={nextPlayer} disabled={!canEndTurn} className="btn btn-secondary" style={{ flex: "1 1 150px" }}>
