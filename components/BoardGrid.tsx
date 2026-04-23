@@ -4,7 +4,8 @@ import { useGameStore } from "../lib/state/gameStore";
 import { t } from "../lib/i18n";
 import { translateCardText } from "../lib/cardTranslations";
 import { getFastTrackEvent } from "../lib/data/fastTrackEvents";
-import type { BoardSquare, BoardSquareType, Player } from "../lib/types";
+import type { Locale, Player } from "../lib/types";
+import type { BoardSquare, BoardSquareType } from "../lib/data/board";
 
 const SQUARE_ICONS: Record<BoardSquareType, string> = {
   OPPORTUNITY: "💡",
@@ -55,7 +56,7 @@ function BoardSection({
   track: "ratRace" | "fastTrack";
   players: Player[];
   currentPlayerId: string | null;
-  locale: string;
+  locale: Locale;
   rows: number;
   cols: number;
 }) {
