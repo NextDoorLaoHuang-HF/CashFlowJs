@@ -605,6 +605,39 @@ textarea.field-input {
   animation: dice-shake 0.5s ease-in-out;
 }
 
+/* Realistic dice roll animation: tumble + bounce */
+@keyframes dice-tumble {
+  0% {
+    transform: translateY(0) rotate(0deg) scale(1);
+  }
+  20% {
+    transform: translateY(-28px) rotate(-75deg) scale(1.05);
+  }
+  40% {
+    transform: translateY(4px) rotate(-140deg) scale(0.95);
+  }
+  55% {
+    transform: translateY(-12px) rotate(-200deg) scale(1.02);
+  }
+  70% {
+    transform: translateY(2px) rotate(-260deg) scale(0.98);
+  }
+  85% {
+    transform: translateY(-4px) rotate(-310deg) scale(1.01);
+  }
+  100% {
+    transform: translateY(0) rotate(-360deg) scale(1);
+  }
+}
+
+.dice-rolling .dice-face {
+  animation: dice-tumble 0.65s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.dice-rolling .dice-face:nth-of-type(2) {
+  animation-delay: 0.08s;
+}
+
 @keyframes tile-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(68, 208, 123, 0.35); }
   50% { box-shadow: 0 0 0 6px rgba(68, 208, 123, 0.1); }
@@ -672,35 +705,41 @@ textarea.field-input {
   }
 }
 
+/* Board ring layout (like the original board game) */
 .board-section {
   margin-bottom: var(--space-md);
   padding-bottom: var(--space-sm);
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-.board-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-  gap: var(--space-sm);
+.board-ring-wrapper {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  padding: 0.25rem;
 }
 
-.board-tile {
-  border-radius: 12px;
+.board-ring {
+  min-width: 320px;
+  aspect-ratio: 1 / 1;
+}
+
+.board-ring .board-tile {
+  border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  padding: var(--space-sm);
-  min-height: 80px;
+  padding: 0.35rem 0.4rem;
+  min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.15rem;
   transition: transform 200ms ease, box-shadow 200ms ease, background-color 200ms ease;
+  font-size: 0.75rem;
 }
 
 .board-tile-active {
-  border-color: rgba(68, 208, 123, 0.6);
+  border-color: rgba(68, 208, 123, 0.7);
   animation: tile-pulse 2s ease-in-out infinite;
-  transform: scale(1.03);
+  transform: scale(1.06);
   z-index: 2;
 }
 
@@ -713,49 +752,102 @@ textarea.field-input {
 .board-occupants {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.15rem;
+  gap: 0.1rem;
   margin-top: auto;
-  padding-top: 0.25rem;
+  padding-top: 0.2rem;
 }
 
-.occupant-dot {
-  display: inline-block;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 1px solid rgba(0, 0, 0, 0.3);
+/* Center label inside the ring */
+.board-center-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
 }
 
+.board-center-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.45;
+  text-align: center;
+}
+
+.board-center-icon {
+  font-size: 1.6rem;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.fast-track-center .board-center-text {
+  font-size: 0.7rem;
+}
+
+.fast-track-center .board-center-icon {
+  font-size: 1.4rem;
+}
+
+/* Player token: round game piece like original board game */
 .player-token {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 5px;
-  border-radius: 6px;
-  font-size: 11px;
-  font-weight: 700;
+  min-width: 20px;
+  height: 20px;
+  width: 20px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 800;
   color: #fff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-  border: 2px solid rgba(255, 255, 255, 0.25);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.25),
+    0 2px 5px rgba(0, 0, 0, 0.35);
   flex-shrink: 0;
 }
 
 @media (min-width: 768px) {
-  .board-grid {
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  }
-
-  .board-tile {
-    min-height: 90px;
+  .board-ring .board-tile {
+    padding: 0.5rem 0.6rem;
+    font-size: 0.8rem;
   }
 
   .player-token {
     min-width: 24px;
     height: 24px;
-    font-size: 12px;
+    width: 24px;
+    font-size: 11px;
+  }
+
+  .board-center-text {
+    font-size: 1rem;
+  }
+
+  .board-center-icon {
+    font-size: 2rem;
+  }
+
+  .fast-track-center .board-center-text {
+    font-size: 0.85rem;
+  }
+
+  .fast-track-center .board-center-icon {
+    font-size: 1.6rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .board-ring {
+    min-width: 480px;
   }
 }
 
