@@ -19,6 +19,21 @@ export type BoardSquare = {
   color: string;
 };
 
+export const SQUARE_ICONS: Record<BoardSquareType, string> = {
+  OPPORTUNITY: "💡",
+  LIABILITY: "⚡",
+  CHARITY: "❤️",
+  PAYCHECK: "💰",
+  OFFER: "📈",
+  CHILD: "👶",
+  DOWNSIZE: "❌",
+  FAST_PAYDAY: "💰",
+  FAST_OPPORTUNITY: "🚀",
+  FAST_DONATION: "🎁",
+  FAST_PENALTY: "🔥",
+  FAST_DREAM: "🏆",
+};
+
 const rawSquares: Array<[BoardSquareType, string]> = [
   ["OPPORTUNITY", "#21940f"],
   ["LIABILITY", "#cc1f00"],
