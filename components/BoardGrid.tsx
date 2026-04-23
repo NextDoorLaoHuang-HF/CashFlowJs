@@ -5,22 +5,9 @@ import { t } from "../lib/i18n";
 import { translateCardText } from "../lib/cardTranslations";
 import { getFastTrackEvent } from "../lib/data/fastTrackEvents";
 import type { Locale, Player } from "../lib/types";
-import type { BoardSquare, BoardSquareType } from "../lib/data/board";
+import { SQUARE_ICONS, type BoardSquare, type BoardSquareType } from "../lib/data/board";
 
-const SQUARE_ICONS: Record<BoardSquareType, string> = {
-  OPPORTUNITY: "💡",
-  LIABILITY: "⚡",
-  CHARITY: "❤️",
-  PAYCHECK: "💰",
-  OFFER: "📈",
-  CHILD: "👶",
-  DOWNSIZE: "❌",
-  FAST_PAYDAY: "💰",
-  FAST_OPPORTUNITY: "🚀",
-  FAST_DONATION: "🎁",
-  FAST_PENALTY: "🔥",
-  FAST_DREAM: "🏆",
-};
+
 
 function getPlayerInitials(player: Player): string {
   const name = player.name || "";
@@ -103,20 +90,23 @@ function BoardTile({
         </div>
       )}
       <div className="board-occupants">
-        {occupants.map((player, idx) => (
-          <span
-            key={player.id}
-            title={player.name}
-            className="player-token"
-            style={{
-              background: player.color,
-              marginLeft: idx > 0 ? "-0.4rem" : 0,
-              zIndex: idx,
-            }}
-          >
-            {getPlayerInitials(player)}
-          </span>
-        ))}
+        {occupants.map((player, idx) => {
+          const isCurrent = player.id === currentPlayerId;
+          return (
+            <span
+              key={player.id}
+              title={player.name}
+              className={`player-token ${isCurrent ? "player-token-current" : ""}`}
+              style={{
+                background: player.color,
+                marginLeft: idx > 0 ? "-0.4rem" : 0,
+                zIndex: isCurrent ? 100 : idx,
+              }}
+            >
+              {getPlayerInitials(player)}
+            </span>
+          );
+        })}
       </div>
     </div>
   );

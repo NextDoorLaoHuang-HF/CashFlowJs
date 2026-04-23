@@ -5,6 +5,7 @@ import { clsx } from "clsx";
 import { t } from "../lib/i18n";
 import { useIsMobile } from "../lib/hooks/useIsMobile";
 import { translateCardText } from "../lib/cardTranslations";
+import { SQUARE_ICONS } from "../lib/data/board";
 import { type DeckKey, useGameStore } from "../lib/state/gameStore";
 import {
   cardMentionsEveryone,
@@ -138,6 +139,7 @@ export function ControlPanel() {
 
   const renderDiceRow = () => {
     if (!dice) return null;
+    const landedSquare = currentSquare;
     return (
       <div className="dice-row">
         <DiceDisplay
@@ -146,9 +148,25 @@ export function ControlPanel() {
           isRolling={diceRolling}
           size="md"
         />
-        <span className="text-muted text-sm">
-          {t(settings.locale, "controls.playerId")}: {currentPlayerId?.slice(0, 4)}
-        </span>
+        {landedSquare && (
+          <div
+            className="dice-target-square"
+            style={{
+              background: `linear-gradient(135deg, ${landedSquare.color}22, ${landedSquare.color}11)`,
+              borderColor: `${landedSquare.color}66`,
+              color: landedSquare.color,
+              textShadow: `0 0 12px ${landedSquare.color}44`,
+              boxShadow: `0 0 16px ${landedSquare.color}22`,
+            }}
+          >
+            <span className="dice-target-icon">
+              {SQUARE_ICONS[landedSquare.type]}
+            </span>
+            <span>
+              {t(settings.locale, `board.square.${landedSquare.type.toLowerCase()}`)} #{landedSquare.id + 1}
+            </span>
+          </div>
+        )}
       </div>
     );
   };
