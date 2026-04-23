@@ -57,71 +57,49 @@ export function LLMPanel() {
   }
 
   return (
-    <div className="card grid" style={{ gap: "0.5rem" }}>
-      <h3 style={{ margin: 0 }}>{t(settings.locale, "llm.title")}</h3>
-      <select
-        value={selectedPlayerId}
-        onChange={(e) => setSelectedPlayerId(e.target.value)}
-        style={{
-          borderRadius: 8,
-          padding: "0.45rem 0.65rem",
-          border: "1px solid rgba(255,255,255,0.08)",
-          background: "rgba(255,255,255,0.04)",
-          color: "#fff"
-        }}
-      >
-        {aiPlayers.map((player) => (
-          <option key={player.id} value={player.id}>
-            {player.name}
-          </option>
-        ))}
-      </select>
-      <input
-        type="password"
-        placeholder={t(settings.locale, "llm.apiKeyPlaceholder")}
-        value={apiKey}
-        onChange={(e) => setApiKey(e.target.value)}
-        style={{
-          borderRadius: 8,
-          padding: "0.45rem 0.65rem",
-          border: "1px solid rgba(255,255,255,0.08)",
-          background: "rgba(255,255,255,0.04)",
-          color: "#fff"
-        }}
-      />
-      <textarea
-        placeholder={t(settings.locale, "llm.promptPlaceholder")}
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        style={{
-          borderRadius: 8,
-          padding: "0.45rem 0.65rem",
-          border: "1px solid rgba(255,255,255,0.08)",
-          background: "rgba(255,255,255,0.04)",
-          color: "#fff",
-          minHeight: "70px"
-        }}
-      />
-      <button
-        onClick={handleRun}
-        disabled={loading}
-        style={{
-          borderRadius: 10,
-          padding: "0.5rem 0.75rem",
-          background: loading ? "rgba(255,255,255,0.09)" : "rgba(14,165,233,0.3)",
-          color: "#fff"
-        }}
-      >
-        {loading ? "…" : t(settings.locale, "llm.run")}
-      </button>
-      {result && (
-        <div style={{ borderRadius: 10, border: "1px solid rgba(255,255,255,0.08)", padding: "0.5rem" }}>
-          <div style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
-            {t(settings.locale, "llm.decision")}: {result.decision}
+    <div className="panel">
+      <h3 className="text-base" style={{ margin: 0 }}>{t(settings.locale, "llm.title")}</h3>
+      <div className="panel-body">
+        <select
+          value={selectedPlayerId}
+          onChange={(e) => setSelectedPlayerId(e.target.value)}
+          className="field-input"
+        >
+          {aiPlayers.map((player) => (
+            <option key={player.id} value={player.id}>
+              {player.name}
+            </option>
+          ))}
+        </select>
+        <input
+          type="password"
+          placeholder={t(settings.locale, "llm.apiKeyPlaceholder")}
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          className="field-input"
+        />
+        <textarea
+          placeholder={t(settings.locale, "llm.promptPlaceholder")}
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          className="field-input"
+        />
+        <button
+          onClick={handleRun}
+          disabled={loading}
+          className="btn btn-primary"
+        >
+          {loading ? "…" : t(settings.locale, "llm.run")}
+        </button>
+        {result && (
+          <div className="action-panel">
+            <div className="text-muted text-sm">
+              {t(settings.locale, "llm.decision")}: {result.decision}
+            </div>
+            <p style={{ margin: "0.35rem 0" }}>{result.summary}</p>
           </div>
-          <p style={{ margin: "0.35rem 0" }}>{result.summary}</p>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

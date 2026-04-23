@@ -59,20 +59,20 @@ export function GameLog() {
   );
 
   return (
-    <div className="card" style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }} data-tour="game-log">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h3 style={{ margin: 0 }}>{t(settings.locale, "log.title")}</h3>
-        <div style={{ display: "flex", gap: "0.5rem" }}>
-          <button onClick={handleExport} style={{ background: "rgba(255,255,255,0.08)", borderRadius: 999, padding: "0.35rem 0.75rem" }}>
+    <div className="panel" data-tour="game-log">
+      <div className="panel-header">
+        <h3 className="text-base" style={{ margin: 0 }}>{t(settings.locale, "log.title")}</h3>
+        <div className="action-row">
+          <button onClick={handleExport} className="btn btn-secondary btn-sm">
             {t(settings.locale, "records.export")}
           </button>
-          <button onClick={clearLog} style={{ background: "rgba(248,113,113,0.2)", borderRadius: 999, padding: "0.35rem 0.75rem" }}>
+          <button onClick={clearLog} className="btn btn-danger btn-sm">
             {t(settings.locale, "records.clear")}
           </button>
         </div>
       </div>
-      <div className="scrollable" style={{ maxHeight: "260px", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-        {logs.length === 0 && <p style={{ color: "var(--muted)" }}>{t(settings.locale, "log.empty")}</p>}
+      <div className="panel-scrollable" style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+        {logs.length === 0 && <p className="text-muted">{t(settings.locale, "log.empty")}</p>}
         {logs.map((log) => {
           const timestamp = new Date(log.timestamp);
           const player = log.playerId ? playerLookup[log.playerId] : undefined;
@@ -81,67 +81,37 @@ export function GameLog() {
           return (
             <article
               key={log.id}
-              style={{
-                padding: "0.75rem",
-                borderRadius: "0.75rem",
-                background: "rgba(255,255,255,0.03)",
-                border: "1px solid rgba(255,255,255,0.05)",
-                boxShadow: "0 5px 20px rgba(2,6,23,0.45)"
-              }}
+              className="log-entry"
             >
-              <header
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: "0.75rem",
-                  alignItems: "center",
-                  marginBottom: "0.35rem"
-                }}
-              >
-                <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem", fontSize: "0.8rem", color: "var(--muted)" }}>
+              <header className="log-entry-header">
+                <div className="log-entry-meta">
                   <span title={timestamp.toLocaleString(settings.locale)}>{timeFormatter.format(timestamp)}</span>
                   <span>
                     {t(settings.locale, "log.turnLabel")} #{log.turn}
                   </span>
                 </div>
                 <span
-                  style={{
-                    fontSize: "0.75rem",
-                    fontWeight: 600,
-                    padding: "0.15rem 0.55rem",
-                    borderRadius: 999,
-                    background: phaseAccent[log.phase] ?? "rgba(255,255,255,0.08)",
-                    color: "var(--text)"
-                  }}
+                  className="chip"
+                  style={{ background: phaseAccent[log.phase] ?? "rgba(255,255,255,0.08)" }}
                 >
                   {phaseLabel}
                 </span>
               </header>
 
               {player && (
-                <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.85rem", color: "var(--muted)", marginBottom: "0.25rem" }}>
+                <div className="log-entry-player">
                   <span>{t(settings.locale, "log.playerLabel")}</span>
                   <span style={{ width: "0.5rem", height: "0.5rem", borderRadius: 999, background: player.color }} />
-                  <span style={{ color: "var(--text)", fontWeight: 600 }}>{player.name}</span>
+                  <span style={{ fontWeight: 600 }}>{player.name}</span>
                 </div>
               )}
 
-              <p style={{ margin: "0.35rem 0", fontSize: "0.95rem", lineHeight: 1.4 }}>{message}</p>
+              <p className="text-sm" style={{ margin: "0.35rem 0", lineHeight: 1.4 }}>{message}</p>
 
               {log.payload && (
                 <details style={{ marginTop: "0.5rem" }}>
-                  <summary style={{ cursor: "pointer", fontSize: "0.8rem", color: "var(--muted)" }}>{t(settings.locale, "log.payloadSummary")}</summary>
-                  <pre
-                    style={{
-                      margin: "0.35rem 0 0",
-                      padding: "0.5rem",
-                      borderRadius: "0.5rem",
-                      background: "rgba(8,11,24,0.6)",
-                      whiteSpace: "pre-wrap",
-                      fontSize: "0.75rem",
-                      color: "var(--muted)"
-                    }}
-                  >
+                  <summary className="text-muted text-xs" style={{ cursor: "pointer" }}>{t(settings.locale, "log.payloadSummary")}</summary>
+                  <pre className="replay-payload">
                     {JSON.stringify(log.payload, null, 2)}
                   </pre>
                 </details>

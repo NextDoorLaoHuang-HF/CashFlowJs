@@ -1,5 +1,6 @@
 "use client";
 
+import { clsx } from "clsx";
 import { t } from "../lib/i18n";
 import { useGameStore } from "../lib/state/gameStore";
 
@@ -17,96 +18,49 @@ export function PlayerSidebar() {
     const totalPayment = bankLoans.reduce((sum, loan) => sum + (loan.payment || 0), 0);
     return (
       <>
-        <dt style={{ color: "var(--muted)" }}>{t(locale, "players.bankLoanBalance")}</dt>
-        <dd style={{ margin: 0, textAlign: "right" }}>${totalBalance.toLocaleString()}</dd>
-        <dt style={{ color: "var(--muted)" }}>{t(locale, "players.bankLoanPayment")}</dt>
-        <dd style={{ margin: 0, textAlign: "right" }}>${totalPayment.toLocaleString()}</dd>
+        <dt className="kv-key">{t(locale, "players.bankLoanBalance")}</dt>
+        <dd className="kv-value">${totalBalance.toLocaleString()}</dd>
+        <dt className="kv-key">{t(locale, "players.bankLoanPayment")}</dt>
+        <dd className="kv-value">${totalPayment.toLocaleString()}</dd>
       </>
     );
   };
 
   return (
-    <div className="card scrollable" style={{ maxHeight: "600px" }}>
-      <h3 style={{ marginTop: 0 }}>{t(locale, "players.title")}</h3>
-      <div className="grid" style={{ gap: "0.75rem" }}>
+    <div className="panel panel-scrollable">
+      <h3 className="text-base" style={{ margin: "0 0 0.75rem" }}>{t(locale, "players.title")}</h3>
+      <div className="panel-body">
         {players.map((player) => (
           <div
             key={player.id}
-            style={{
-              padding: "0.75rem",
-              borderRadius: 12,
-              background:
-                player.status === "bankrupt"
-                  ? "rgba(239,68,68,0.12)"
-                  : player.id === currentPlayerId
-                    ? "rgba(68, 208, 123, 0.15)"
-                    : "rgba(255,255,255,0.03)",
-              border:
-                player.status === "bankrupt"
-                  ? "1px solid rgba(239,68,68,0.45)"
-                  : player.id === currentPlayerId
-                    ? "1px solid rgba(68,208,123,0.5)"
-                    : "1px solid rgba(255,255,255,0.05)",
-              opacity: player.status === "bankrupt" ? 0.7 : 1
-            }}
+            className={clsx("player-card", {
+              "player-card-active": player.id === currentPlayerId && player.status !== "bankrupt",
+              "player-card-bankrupt": player.status === "bankrupt"
+            })}
           >
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <span
-                style={{
-                  width: 16,
-                  height: 16,
-                  borderRadius: "50%",
-                  background: player.color,
-                  border: "1px solid rgba(0,0,0,0.4)"
-                }}
-              />
+              <span className="occupant-dot" style={{ background: player.color, width: 16, height: 16 }} />
               <strong>{player.name}</strong>
               {player.status === "bankrupt" && (
-                <span
-                  style={{
-                    fontSize: "0.7rem",
-                    padding: "0.1rem 0.4rem",
-                    borderRadius: 999,
-                    background: "rgba(239,68,68,0.25)",
-                    color: "var(--text)"
-                  }}
-                >
+                <span className="chip" style={{ background: "rgba(239,68,68,0.25)", color: "var(--text)" }}>
                   {t(locale, "players.status.bankrupt")}
                 </span>
               )}
               {player.track === "fastTrack" && (
-                <span
-                  style={{
-                    fontSize: "0.7rem",
-                    padding: "0.1rem 0.4rem",
-                    borderRadius: 999,
-                    background: "rgba(251,191,36,0.2)",
-                    color: "var(--text)"
-                  }}
-                >
+                <span className="chip" style={{ background: "rgba(251,191,36,0.2)", color: "var(--text)" }}>
                   {t(locale, "players.track.fastTrack")}
                 </span>
               )}
             </div>
-            <dl
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                gap: "0.25rem",
-                margin: "0.5rem 0 0",
-                fontSize: "0.85rem"
-              }}
-            >
-              <dt style={{ color: "var(--muted)" }}>{t(locale, "players.cash")}</dt>
-              <dd style={{ margin: 0, textAlign: "right" }}>${player.cash.toLocaleString()}</dd>
-              <dt style={{ color: "var(--muted)" }}>{t(locale, "players.passive")}</dt>
-              <dd style={{ margin: 0, textAlign: "right" }}>${player.passiveIncome.toLocaleString()}</dd>
-              <dt style={{ color: "var(--muted)" }}>{t(locale, "players.payday")}</dt>
-              <dd style={{ margin: 0, textAlign: "right" }}>${player.payday.toLocaleString()}</dd>
-              <dt style={{ color: "var(--muted)" }}>{t(locale, "players.dream")}</dt>
-              <dd style={{ margin: 0, textAlign: "right" }}>
-                {player.dream ? t(locale, `dream.${player.dream.id}.title`) : "—"}
-              </dd>
+            <dl className="kv-grid" style={{ marginTop: "0.5rem" }}>
+              <dt className="kv-key">{t(locale, "players.cash")}</dt>
+              <dd className="kv-value">${player.cash.toLocaleString()}</dd>
+              <dt className="kv-key">{t(locale, "players.passive")}</dt>
+              <dd className="kv-value">${player.passiveIncome.toLocaleString()}</dd>
+              <dt className="kv-key">{t(locale, "players.payday")}</dt>
+              <dd className="kv-value">${player.payday.toLocaleString()}</dd>
+              <dt className="kv-key">{t(locale, "players.dream")}</dt>
+              <dd className="kv-value">{player.dream ? t(locale, `dream.${player.dream.id}.title`) : "—"}</dd>
               {renderBankLoans(player)}
             </dl>
           </div>

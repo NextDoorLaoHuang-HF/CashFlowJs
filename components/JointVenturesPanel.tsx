@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { clsx } from "clsx";
 import { useGameStore } from "../lib/state/gameStore";
 import { t } from "../lib/i18n";
 import type { JointVenture } from "../lib/types";
@@ -44,104 +45,77 @@ export function JointVenturesPanel() {
   };
 
   return (
-    <div className="card grid" style={{ gap: "0.6rem" }}>
-      <h3 style={{ margin: 0 }}>{t(settings.locale, "ventures.title")}</h3>
-      <div className="grid" style={{ gap: "0.5rem" }}>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder={t(settings.locale, "ventures.namePlaceholder")}
-          style={{ borderRadius: 8, padding: "0.45rem 0.65rem", border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.04)", color: "#fff" }}
-        />
-        <textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder={t(settings.locale, "ventures.notesPlaceholder")}
-          style={{
-            borderRadius: 8,
-            padding: "0.45rem 0.65rem",
-            border: "1px solid rgba(255,255,255,0.08)",
-            background: "rgba(255,255,255,0.04)",
-            color: "#fff",
-            minHeight: "60px"
-          }}
-        />
-        <div style={{ display: "flex", gap: "0.5rem" }}>
+    <div className="panel">
+      <h3 className="text-base" style={{ margin: 0 }}>{t(settings.locale, "ventures.title")}</h3>
+      <div className="panel-body">
+        <div className="field">
           <input
-            type="number"
-            value={cashNeeded}
-            onChange={(e) => setCashNeeded(Number(e.target.value) || 0)}
-            placeholder={t(settings.locale, "ventures.capitalLabel")}
-            style={{
-              flex: 1,
-              borderRadius: 8,
-              padding: "0.45rem 0.65rem",
-              border: "1px solid rgba(255,255,255,0.08)",
-              background: "rgba(255,255,255,0.04)",
-              color: "#fff"
-            }}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={t(settings.locale, "ventures.namePlaceholder")}
+            className="field-input"
           />
-          <input
-            type="number"
-            value={cashflow}
-            onChange={(e) => setCashflow(Number(e.target.value) || 0)}
-            placeholder={t(settings.locale, "ventures.cashflowLabel")}
-            style={{
-              flex: 1,
-              borderRadius: 8,
-              padding: "0.45rem 0.65rem",
-              border: "1px solid rgba(255,255,255,0.08)",
-              background: "rgba(255,255,255,0.04)",
-              color: "#fff"
-            }}
+        </div>
+        <div className="field">
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder={t(settings.locale, "ventures.notesPlaceholder")}
+            className="field-input"
           />
+        </div>
+        <div className="field-row">
+          <div className="field">
+            <input
+              type="number"
+              value={cashNeeded}
+              onChange={(e) => setCashNeeded(Number(e.target.value) || 0)}
+              placeholder={t(settings.locale, "ventures.capitalLabel")}
+              className="field-input"
+            />
+          </div>
+          <div className="field">
+            <input
+              type="number"
+              value={cashflow}
+              onChange={(e) => setCashflow(Number(e.target.value) || 0)}
+              placeholder={t(settings.locale, "ventures.cashflowLabel")}
+              className="field-input"
+            />
+          </div>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
           {players.map((player) => (
             <button
               key={player.id}
               onClick={() => togglePlayer(player.id)}
-              style={{
-                borderRadius: 30,
-                padding: "0.35rem 0.9rem",
-                border: selectedPlayers.includes(player.id) ? "1px solid var(--accent)" : "1px solid rgba(255,255,255,0.08)",
-                background: selectedPlayers.includes(player.id) ? "rgba(68,208,123,0.15)" : "transparent",
-                color: "#fff"
-              }}
+              className={clsx("btn btn-sm", selectedPlayers.includes(player.id) ? "btn-primary" : "btn-secondary")}
             >
               {player.name}
             </button>
           ))}
         </div>
-        <button
-          onClick={handleCreate}
-          style={{
-            borderRadius: 10,
-            padding: "0.5rem 0.75rem",
-            background: "rgba(59,130,246,0.3)",
-            color: "#fff"
-          }}
-        >
+        <button onClick={handleCreate} className="btn btn-primary">
           {t(settings.locale, "ventures.new")}
         </button>
       </div>
-      <div className="scrollable" style={{ maxHeight: "200px" }}>
-        {ventures.length === 0 && <p style={{ color: "var(--muted)" }}>{t(settings.locale, "ventures.empty")}</p>}
+      <div className="panel-scrollable">
+        {ventures.length === 0 && <p className="text-muted text-sm">{t(settings.locale, "ventures.empty")}</p>}
         {ventures.map((venture) => (
-          <div key={venture.id} style={{ padding: "0.5rem 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+          <div key={venture.id} className="asset-row">
             <strong>{venture.name}</strong>
-            <p style={{ margin: "0.25rem 0", color: "var(--muted)", fontSize: "0.85rem" }}>{venture.description}</p>
-            <dl style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", margin: 0, fontSize: "0.8rem" }}>
-              <dt>{t(settings.locale, "ventures.capitalLabel")}</dt>
-              <dd style={{ margin: 0, textAlign: "right" }}>${venture.cashNeeded.toLocaleString()}</dd>
-              <dt>{t(settings.locale, "ventures.cashflowLabel")}</dt>
-              <dd style={{ margin: 0, textAlign: "right" }}>${venture.cashflowImpact.toLocaleString()}</dd>
+            <p className="text-muted text-sm" style={{ margin: "0.25rem 0" }}>{venture.description}</p>
+            <dl className="kv-grid">
+              <dt className="kv-key">{t(settings.locale, "ventures.capitalLabel")}</dt>
+              <dd className="kv-value">${venture.cashNeeded.toLocaleString()}</dd>
+              <dt className="kv-key">{t(settings.locale, "ventures.cashflowLabel")}</dt>
+              <dd className="kv-value">${venture.cashflowImpact.toLocaleString()}</dd>
             </dl>
             <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap", marginTop: "0.3rem" }}>
               {venture.participants.map((part) => {
                 const player = players.find((p) => p.id === part.playerId);
                 return (
-                  <span key={part.playerId} style={{ fontSize: "0.8rem", color: "var(--muted)" }}>
+                  <span key={part.playerId} className="text-muted text-xs">
                     {player?.name}: ${part.contribution.toLocaleString()}
                   </span>
                 );
@@ -150,14 +124,8 @@ export function JointVenturesPanel() {
             <select
               value={venture.status}
               onChange={(e) => updateJointVenture(venture.id, { status: e.target.value as JointVenture["status"] })}
-              style={{
-                marginTop: "0.25rem",
-                background: "rgba(255,255,255,0.05)",
-                borderRadius: 8,
-                border: "1px solid rgba(255,255,255,0.08)",
-                color: "#fff",
-                padding: "0.35rem"
-              }}
+              className="field-input"
+              style={{ marginTop: "0.25rem" }}
             >
               <option value="forming">{t(settings.locale, "ventures.status.forming")}</option>
               <option value="active">{t(settings.locale, "ventures.status.active")}</option>
