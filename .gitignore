@@ -17,3 +17,4 @@ batch_translate*.txt
 untranslated_texts*.txt
 find_untranslated.py
 test-results
+/git-review-exports/
