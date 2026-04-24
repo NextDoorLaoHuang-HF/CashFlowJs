@@ -6,6 +6,7 @@ import { useMultiplayerStore } from "../lib/multiplayer/syncStore";
 import { readyUp, startGame, getRoomState, leaveRoom } from "../app/actions/roomActions";
 import { t } from "../lib/i18n";
 import { dreams, scenarios } from "../lib/data/scenarios";
+import { useGameStore } from "../lib/state/gameStore";
 
 export function RoomScreen() {
   const store = useMultiplayerStore();
@@ -129,6 +130,10 @@ export function RoomScreen() {
       setIsLoading(false);
     }
   };
+
+  // Note: game state sync is handled by useMultiplayer() in page.tsx,
+  // which performs an initial pull + realtime subscription.
+  // RoomScreen only needs to show the lobby UI and transition signal.
 
   const handleLeave = async () => {
     if (!roomId || !userId) return;

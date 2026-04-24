@@ -179,8 +179,8 @@ export async function startGame(roomId: string, hostId: string) {
 
   const { state, logs, frames } = initGame(playerSetups, room.settings as Partial<GameSettings>);
 
-  // Store game state
-  const { error: stateError } = await supabase.from("game_states").insert({
+  // Store game state (upsert to handle retries or stale data)
+  const { error: stateError } = await supabase.from("game_states").upsert({
     room_id: roomId,
     phase: state.phase,
     turn_state: state.turnState,
@@ -198,9 +198,12 @@ export async function startGame(roomId: string, hostId: string) {
     rng_seed: state.rngSeed,
     rng_state: state.rngState,
     version: 1
-  });
+  }, { onConflict: "room_id" });
 
-  if (stateError) throw stateError;
+  if (stateError) {
+    console.error("[startGame] Failed to upsert game state:", stateError);
+    throw new Error(`Failed to save game state: ${stateError.message}`);
+  }
 
   // Update room status
   const { error: roomError } = await supabase

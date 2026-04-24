@@ -33,6 +33,7 @@ import {
 	  PlayerLoan,
 	  TurnState
 	} from "../types";
+import type { GameEngineState } from "../engine/types";
 
 export type DeckKey = "smallDeals" | "bigDeals" | "offers" | "doodads";
 
@@ -142,6 +143,7 @@ type GameStore = {
   enterFastTrack: (playerId: string) => void;
   sellLiquidationAsset: (assetId: string, quantity: number) => void;
   finalizeLiquidation: () => void;
+  syncMultiplayerState: (state: Partial<GameEngineState>) => void;
 };
 
 const defaultSettings: GameSettings = {
@@ -3371,6 +3373,32 @@ export const useGameStore = create<GameStore>((set, get) => {
       "log.fastTrack.bankrupt",
       { required: settled.requiredCash, cashAvailable: settled.cashAvailable, shortfall: settled.shortfall },
       playerId
+    );
+  },
+  syncMultiplayerState: (serverState) => {
+    set(
+      produce<GameStore>((draft) => {
+        if (serverState.phase !== undefined) draft.phase = serverState.phase;
+        if (serverState.players !== undefined) draft.players = serverState.players;
+        if (serverState.currentPlayerId !== undefined) draft.currentPlayerId = serverState.currentPlayerId;
+        if (serverState.turnState !== undefined) draft.turnState = serverState.turnState;
+        if (serverState.rngSeed !== undefined) draft.rngSeed = serverState.rngSeed;
+        if (serverState.rngState !== undefined) draft.rngState = serverState.rngState;
+        if (serverState.decks !== undefined) draft.decks = serverState.decks as Record<DeckKey, BaseCard[]>;
+        if (serverState.discard !== undefined) draft.discard = serverState.discard as Record<DeckKey, BaseCard[]>;
+        if (serverState.selectedCard !== undefined) draft.selectedCard = serverState.selectedCard;
+        if (serverState.marketSession !== undefined) draft.marketSession = serverState.marketSession as MarketSession | undefined;
+        if (serverState.liquidationSession !== undefined) draft.liquidationSession = serverState.liquidationSession as LiquidationSession | undefined;
+        if (serverState.dice !== undefined) draft.dice = serverState.dice;
+        if (serverState.turn !== undefined) draft.turn = serverState.turn;
+        if (serverState.logs !== undefined) draft.logs = serverState.logs;
+        if (serverState.replayFrames !== undefined) draft.replayFrames = serverState.replayFrames as GameReplayFrame[];
+        if (serverState.ventures !== undefined) draft.ventures = serverState.ventures;
+        if (serverState.loans !== undefined) draft.loans = serverState.loans;
+        if (serverState.settings !== undefined) draft.settings = serverState.settings;
+        if (serverState.history !== undefined) draft.history = serverState.history;
+        if (serverState.charityPrompt !== undefined) draft.charityPrompt = serverState.charityPrompt;
+      })
     );
   }
   };

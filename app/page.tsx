@@ -13,6 +13,7 @@ import { MultiplayerLobby } from "../components/MultiplayerLobby";
 import { RoomScreen } from "../components/RoomScreen";
 import { useGameStore } from "../lib/state/gameStore";
 import { useMultiplayerStore } from "../lib/multiplayer/syncStore";
+import { useMultiplayer } from "../lib/multiplayer/useMultiplayer";
 import { t } from "../lib/i18n";
 
 type AppMode = "menu" | "local" | "multiplayer";
@@ -28,13 +29,20 @@ export default function Page() {
   const mpStore = useMultiplayerStore();
   const [appMode, setAppMode] = useState<AppMode>("menu");
 
+  // Activate multiplayer realtime subscription when in a room
+  useMultiplayer();
+
   // In a room (lobby or playing)
   const inRoom = mpStore.roomId !== null;
+  // isMultiplayerActive: true when the server has pushed an active game state
+  // (phase moved out of setup OR players array is non-empty).
+  // This lets us switch from the RoomScreen lobby to the actual game board.
+  const isMultiplayerActive = inRoom && (mpStore.phase !== "setup" || mpStore.players.length > 0);
 
   // Determine what to render
   const renderContent = () => {
     // If we're in a multiplayer room but game hasn't started, show room screen
-    if (inRoom && phase === "setup" && players.length === 0) {
+    if (inRoom && phase === "setup" && players.length === 0 && !isMultiplayerActive) {
       return <RoomScreen />;
     }
 

@@ -4,9 +4,9 @@ import { useEffect, useCallback } from "react";
 import { useMultiplayerStore } from "./syncStore";
 import { createClient } from "../supabase/client";
 import { submitAction } from "../../app/actions/gameActions";
+import { getRoomState } from "../../app/actions/roomActions";
+import { syncServerRecordToStores } from "./syncState";
 import type { GameAction } from "../engine/gameEngine";
-import type { GameEngineState } from "../engine/gameEngine";
-import type { GameSettings, Player } from "../types";
 
 export function useMultiplayer() {
   const roomId = useMultiplayerStore((s) => s.roomId);
@@ -16,13 +16,45 @@ export function useMultiplayer() {
   const currentPlayerId = useMultiplayerStore((s) => s.currentPlayerId);
   const players = useMultiplayerStore((s) => s.players);
 
-  // Subscribe to Postgres Changes for state sync
+  // Initial fetch + Realtime subscription for state sync
   useEffect(() => {
     if (!roomId) return;
 
+    let cancelled = false;
+
+    // 1. Initial load: pull current game state immediately so we don't miss
+    //    events that fired before the channel was fully subscribed.
+    const loadInitial = async () => {
+      try {
+        const state = await getRoomState(roomId);
+        if (cancelled) return;
+        if (state.gameState) {
+          syncServerRecordToStores(state.gameState as Record<string, unknown>);
+        }
+      } catch (err) {
+        console.error("[useMultiplayer] Initial state load failed:", err);
+      }
+    };
+
+    loadInitial();
+
+    // 2. Realtime subscription for subsequent updates
     const supabase = createClient();
     const channel = supabase
       .channel(`game_state:${roomId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "game_states",
+          filter: `room_id=eq.${roomId}`
+        },
+        (payload) => {
+          console.log("[useMultiplayer] game_states INSERT received");
+          syncServerRecordToStores(payload.new as Record<string, unknown>);
+        }
+      )
       .on(
         "postgres_changes",
         {
@@ -32,30 +64,17 @@ export function useMultiplayer() {
           filter: `room_id=eq.${roomId}`
         },
         (payload) => {
-          const newRecord = payload.new as Record<string, unknown>;
-          useMultiplayerStore.getState().syncState({
-            phase: newRecord.phase as GameEngineState["phase"],
-            players: newRecord.players as Player[],
-            currentPlayerId: newRecord.current_player_id as string | null,
-            turnState: newRecord.turn_state as GameEngineState["turnState"],
-            dice: newRecord.dice as GameEngineState["dice"],
-            selectedCard: newRecord.selected_card as GameEngineState["selectedCard"],
-            marketSession: newRecord.market_session as GameEngineState["marketSession"],
-            liquidationSession: newRecord.liquidation_session as GameEngineState["liquidationSession"],
-            charityPrompt: newRecord.charity_prompt as GameEngineState["charityPrompt"],
-            turn: newRecord.turn as number,
-            logs: newRecord.logs as GameEngineState["logs"],
-            settings: newRecord.settings as GameSettings,
-            version: (newRecord.version as number) ?? stateVersion
-          });
+          console.log("[useMultiplayer] game_states UPDATE received");
+          syncServerRecordToStores(payload.new as Record<string, unknown>);
         }
       )
       .subscribe();
 
     return () => {
+      cancelled = true;
       supabase.removeChannel(channel);
     };
-  }, [roomId, stateVersion]);
+  }, [roomId]);
 
   const sendAction = useCallback(
     async (action: GameAction, retryCount = 0) => {
@@ -73,7 +92,7 @@ export function useMultiplayer() {
 
         if (!result.success && "conflict" in result && result.conflict) {
           if (result.currentState) {
-            store.syncState(result.currentState as Parameters<typeof store.syncState>[0]);
+            syncServerRecordToStores(result.currentState as Record<string, unknown>);
           }
           if (retryCount < 1) {
             // Auto-retry once after syncing latest state
@@ -85,7 +104,7 @@ export function useMultiplayer() {
         } else if (result.success) {
           store.markActionSent();
           if (result.state) {
-            store.syncState(result.state as Parameters<typeof store.syncState>[0]);
+            syncServerRecordToStores(result.state as unknown as Record<string, unknown>);
           }
         }
       } catch (err) {
