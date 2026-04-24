@@ -10,6 +10,9 @@
     "test": "vitest"
   },
   "dependencies": {
+    "@playwright/test": "^1.59.1",
+    "@supabase/ssr": "^0.10.2",
+    "@supabase/supabase-js": "^2.104.1",
     "clsx": "^2.0.0",
     "date-fns": "^3.6.0",
     "immer": "^10.0.3",
@@ -17,6 +20,7 @@
     "openai": "^4.52.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "undici": "^8.1.0",
     "uuid": "^9.0.1",
     "zustand": "^4.5.2"
   },
