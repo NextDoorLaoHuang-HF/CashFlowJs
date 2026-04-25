@@ -2,6 +2,7 @@
 
 import { createAdminClient } from "@/lib/supabase/server";
 import type { GameSettings } from "@/lib/types";
+import { toSignedInt32 } from "@/lib/utils/intConverter";
 
 function generateRoomCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -195,8 +196,8 @@ export async function startGame(roomId: string, hostId: string) {
     loans: state.loans,
     settings: state.settings,
     history: state.history,
-    rng_seed: state.rngSeed,
-    rng_state: state.rngState,
+    rng_seed: toSignedInt32(state.rngSeed),
+    rng_state: toSignedInt32(state.rngState),
     version: 1
   }, { onConflict: "room_id" });
 

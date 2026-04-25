@@ -2,6 +2,7 @@
 
 import { createAdminClient } from "@/lib/supabase/server";
 import { applyAction, type GameAction, type GameEngineState } from "@/lib/engine/gameEngine";
+import { toSignedInt32, toUnsignedInt32 } from "@/lib/utils/intConverter";
 
 export async function submitAction(
   roomId: string,
@@ -63,8 +64,8 @@ export async function submitAction(
     players: gameState.players,
     currentPlayerId: gameState.current_player_id,
     turnState: gameState.turn_state,
-    rngSeed: gameState.rng_seed,
-    rngState: gameState.rng_state,
+    rngSeed: toUnsignedInt32(gameState.rng_seed),
+    rngState: toUnsignedInt32(gameState.rng_state),
     decks: gameState.decks,
     discard: gameState.discard,
     selectedCard: gameState.selected_card,
@@ -107,8 +108,8 @@ export async function submitAction(
       settings: result.state.settings,
       history: result.state.history,
       charity_prompt: result.state.charityPrompt,
-      rng_seed: result.state.rngSeed,
-      rng_state: result.state.rngState,
+      rng_seed: toSignedInt32(result.state.rngSeed),
+      rng_state: toSignedInt32(result.state.rngState),
       version: newVersion,
       updated_at: new Date().toISOString()
     })

@@ -1,9 +1,19 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
-import { afterEach } from "vitest";
+import { afterEach, vi } from "vitest";
 
 afterEach(() => {
   cleanup();
+});
+
+// Polyfill crypto.randomUUID for jsdom / test consistency
+let _uuidCounter = 0;
+Object.defineProperty(globalThis, "crypto", {
+  writable: true,
+  value: {
+    ...(globalThis.crypto ?? {}),
+    randomUUID: () => `mock-uuid-${++_uuidCounter}-${Date.now()}`
+  }
 });
 
 Object.defineProperty(window, "matchMedia", {

@@ -55,7 +55,14 @@ export function RoomScreen() {
     };
 
     load();
-    const pollInterval = setInterval(load, 3000);
+
+    // Polling fallback (every 3s) — recursive setTimeout prevents request overlap
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      await load();
+      if (!cancelled) timeoutId = setTimeout(poll, 3000);
+    };
+    timeoutId = setTimeout(poll, 3000);
 
     // Realtime subscription (best-effort)
     const supabase = createClient();
@@ -93,7 +100,7 @@ export function RoomScreen() {
 
     return () => {
       cancelled = true;
-      clearInterval(pollInterval);
+      clearTimeout(timeoutId);
       supabase.removeChannel(channel);
     };
   }, [roomId]);

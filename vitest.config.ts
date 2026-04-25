@@ -11,6 +11,13 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    setupFiles: ["./test/setup.ts"]
+    setupFiles: ["./test/setup.ts"],
+    exclude: ["node_modules", "e2e", "test-multiplayer.spec.ts", "test-multiplayer.js"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json", "html"],
+      include: ["lib/**/*.{ts,tsx}", "app/**/*.{ts,tsx}", "components/**/*.{ts,tsx}"],
+      exclude: ["node_modules", "test/**", "test-multiplayer.spec.ts", "lib/data/**"]
+    }
   }
 });

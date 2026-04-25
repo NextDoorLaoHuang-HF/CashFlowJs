@@ -38,7 +38,16 @@ export function useMultiplayer() {
 
     loadInitial();
 
-    // 2. Realtime subscription for subsequent updates
+    // 2. Polling fallback (every 3s) for environments where Realtime is not available.
+    //    Uses recursive setTimeout so requests never overlap.
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      await loadInitial();
+      if (!cancelled) timeoutId = setTimeout(poll, 3000);
+    };
+    timeoutId = setTimeout(poll, 3000);
+
+    // 3. Realtime subscription for subsequent updates
     const supabase = createClient();
     const channel = supabase
       .channel(`game_state:${roomId}`)
@@ -72,6 +81,7 @@ export function useMultiplayer() {
 
     return () => {
       cancelled = true;
+      clearTimeout(timeoutId);
       supabase.removeChannel(channel);
     };
   }, [roomId]);

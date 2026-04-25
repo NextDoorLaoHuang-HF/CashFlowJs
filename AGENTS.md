@@ -11,7 +11,7 @@
 - P1：补齐资产/负债报表与交互（卖出资产、还款银行贷款、选择性卖出 Offer）
 - P2：实现 Offer/Stock 的 “Everyone may sell” 全员响应窗口（按回合顺序可复盘）
 - P3：外圈（Fast Track）事件表数据化（如需对齐 `legacy/js/fasttrack.js`，必须先修复旧版 bug 再移植）
-- 规则/架构变更流程：先更新 `docs/game-rules-spec.md` / `docs/architecture.md`，再改代码，最后 `npm run lint` + 手动验收
+- 规则/架构变更流程：先更新 `docs/game-rules-spec.md` / `docs/architecture.md`，再改代码，最后 `npm run lint` + `npm run test` + `npm run test:e2e`
 
 ## Project Structure & Module Organization
 - `app/`: Next.js App Router entry (`layout.tsx`, `page.tsx`) plus API route `api/llm/route.ts`.
@@ -29,7 +29,11 @@
 - `npm run dev` — start the dev server on port 3000 with hot reload.
 - `npm run build` — production build (used by Vercel).
 - `npm run start` — serve the compiled build.
-- `npm run lint` — ESLint with Next.js config; run before commits/PRs.
+- `npm run lint` — ESLint with Next.js config.
+- `npm run test` — Vitest 单元测试（UI primitives + gameStore reducers）。
+- `npm run test:coverage` — Vitest 覆盖率报告。
+- `npm run test:e2e` — Playwright 端到端测试（多人游戏流程）。
+- **提交流程**：`npm run lint` → `npm run test` → `npm run test:e2e` 全部通过后提交。
 
 ## Coding Style & Naming Conventions
 - TypeScript with `strict` mode; mark interactive components with `"use client"`.
@@ -38,10 +42,30 @@
 - Prefer CSS variables and utilities from `app/globals.css`; inline styles are fine for small tweaks.
 - Use Zustand selectors (`useGameStore((state) => …)`) to limit re-renders; update state via Immer producers, not mutation.
 
-## Testing Guidelines
-- No automated tests yet; rely on `npm run lint` plus manual checks (setup wizard, rolls/deals, ventures/loans, log export, locale toggle, LLM prompt flow).
-- If adding tests, prefer Vitest + React Testing Library; co-locate as `*.test.ts(x)` or under `__tests__/`.
-- Target reducers in `lib/state/gameStore.ts`, deck shuffling, localization fallbacks, and API request/response handling.
+## Testing Guidelines — 红绿测试驱动开发（TDD）
+
+### 当前测试体系
+- **单元测试**：Vitest + React Testing Library，位于 `test/*.test.ts(x)`。已覆盖 UI primitives（`test/ui-primitives.test.tsx`）和 `lib/state/gameStore.ts` reducers。
+- **E2E 测试**：Playwright，位于 `e2e/multiplayer.spec.ts`。已覆盖：
+  1. 双浏览器创建/加入房间并互相可见
+  2. Host 开始游戏后双方进入游戏板（BoardGrid/ControlPanel）
+  3. 当前玩家掷骰子并推进回合
+- **覆盖率**：当前 `gameStore.ts` ~44%，UI 组件（BoardGrid、PortfolioPanel、SetupWizard 等）为 0%，是重点补齐方向。
+
+### TDD 开发纪律（以后所有开发必须遵守）
+1. **改规则 / 改 store**：先写/更新单元测试（红），再修改 `lib/state/gameStore.ts`（绿）。目标 `gameStore.ts` 覆盖率达到 80%+。
+2. **改多人游戏流程**：先写/更新 E2E 测试（红），再改 `lib/multiplayer/` 或相关组件（绿）。E2E 测试必须串行执行（`workers: 1`），避免房间状态冲突。
+3. **新功能**：
+   - 纯 UI 组件 → 写 Vitest 组件测试（渲染、交互）。
+   - 游戏逻辑 → 写 `gameStore.ts` reducer 单元测试（输入 state + action → 断言输出 state）。
+   - 跨端同步 → 写 Playwright E2E 测试。
+4. **不允许的情况**：没有对应测试的代码改动直接提交。补测试 = 同一 PR 内完成。
+5. **LLM 路由豁免**：`app/api/llm/route.ts` 因涉及外部 OpenAI API 调用，暂不强制要求测试。
+
+### 技术规范
+- 单元测试：Vitest + React Testing Library；文件命名 `*.test.ts(x)`。
+- E2E 测试：Playwright；配置在 `playwright.config.ts`；测试在 `e2e/` 目录。
+- E2E 环境变量通过 `node --env-file=.env.local` 注入，需要 `.env.local` 包含 Supabase 凭据和 `TEST_BASE_URL`。
 
 ## Commit & Pull Request Guidelines
 - Commits in history are short, present-tense summaries; follow that style (e.g., `Adjust venture payout`, `Fix localization toggle`).
