@@ -1,3 +1,5 @@
+"use client";
+
 import { produce } from "immer";
 import { create } from "zustand";
 import { v4 as uuid } from "uuid";

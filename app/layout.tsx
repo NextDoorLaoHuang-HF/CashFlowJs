@@ -6,12 +6,12 @@ import "./ui.css";
 const inter = localFont({
   src: [
     {
-      path: "../public/fonts/Inter-roman.var.woff2",
+      path: "./fonts/Inter-roman.var.woff2",
       style: "normal",
       weight: "100 900"
     },
     {
-      path: "../public/fonts/Inter-italic.var.woff2",
+      path: "./fonts/Inter-italic.var.woff2",
       style: "italic",
       weight: "100 900"
     }

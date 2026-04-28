@@ -1,3 +1,5 @@
+"use client";
+
 import { useMultiplayerStore } from "./syncStore";
 import { useGameStore } from "../state/gameStore";
 import type { GameEngineState } from "../engine/types";
