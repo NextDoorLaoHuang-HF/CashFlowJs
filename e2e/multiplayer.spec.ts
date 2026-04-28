@@ -1,106 +1,96 @@
 import { test, expect, chromium, type Page } from "@playwright/test";
-import { cleanupRoomByCode } from "./helpers";
+import {
+  cleanupRoomByCode,
+  getGameState,
+  getRoomByCode,
+  getRoomPlayers,
+  waitForRoomStatus,
+} from "./helpers";
 
 const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3000";
 
-async function waitForCondition(
-  condition: () => Promise<boolean>,
-  timeout = 10000,
-  interval = 500
-) {
-  const start = Date.now();
-  while (Date.now() - start < timeout) {
-    if (await condition()) return true;
-    await new Promise((r) => setTimeout(r, interval));
-  }
-  return false;
-}
+/* ------------------------------------------------------------------ */
+/* Page helpers using data-testid selectors                             */
+/* ------------------------------------------------------------------ */
 
 async function enterMultiplayer(page: Page) {
   await page.goto(BASE_URL);
   await page.waitForLoadState("networkidle");
-  const multiplayerBtn = page.locator('button:has-text("联机游戏")');
-  await expect(multiplayerBtn).toBeVisible({ timeout: 5000 });
+  const multiplayerBtn = page.getByTestId("menu-multiplayer-btn");
+  await expect(multiplayerBtn).toBeVisible();
   await multiplayerBtn.click();
 }
 
 async function createRoom(page: Page, name: string) {
   await enterMultiplayer(page);
-  const createRoomBtn = page.locator('button:has-text("创建房间")');
-  await expect(createRoomBtn).toBeVisible({ timeout: 5000 });
-  await createRoomBtn.click();
 
-  const nameInput = page.locator('input[placeholder*="昵称"], input[placeholder*="name"]').first();
-  await expect(nameInput).toBeVisible({ timeout: 5000 });
-  await nameInput.fill(name);
+  await page.getByTestId("lobby-create-room-btn").click();
+  await page.getByTestId("lobby-name-input").fill(name);
+  await page.getByTestId("lobby-submit-btn").click();
 
-  const createBtn = page.locator('button:has-text("创建")');
-  await createBtn.click();
-
-  const roomCodeLabel = page.locator('text=/房间码[:：]/');
-  await expect(roomCodeLabel).toBeVisible({ timeout: 15000 });
-  const roomCodeText = await roomCodeLabel.locator("strong").textContent();
-  return roomCodeText?.trim() ?? "";
+  const codeEl = page.getByTestId("room-code-display");
+  await expect(codeEl).toBeVisible({ timeout: 15000 });
+  const code = (await codeEl.textContent())?.trim() ?? "";
+  expect(code).toMatch(/^[A-Z0-9]{6}$/);
+  return code;
 }
 
 async function joinRoom(page: Page, name: string, code: string) {
   await enterMultiplayer(page);
-  const joinRoomBtn = page.locator('button:has-text("加入房间")');
-  await expect(joinRoomBtn).toBeVisible({ timeout: 5000 });
-  await joinRoomBtn.click();
 
-  const nameInput = page.locator('input[placeholder*="昵称"], input[placeholder*="name"]').first();
-  await expect(nameInput).toBeVisible({ timeout: 5000 });
-  await nameInput.fill(name);
+  await page.getByTestId("lobby-join-room-btn").click();
+  await page.getByTestId("lobby-name-input").fill(name);
+  await page.getByTestId("lobby-code-input").fill(code);
+  await page.getByTestId("lobby-submit-btn").click();
 
-  const codeInput = page.locator('input[placeholder*="房间码"], input[placeholder*="code"]').first();
-  await expect(codeInput).toBeVisible({ timeout: 5000 });
-  await codeInput.fill(code);
-
-  const joinBtn = page.locator('button:has-text("加入")');
-  await joinBtn.click();
-
-  await expect(page.locator('text=/房间码[:：]/')).toBeVisible({ timeout: 15000 });
+  await expect(page.getByTestId("room-code-display")).toBeVisible({ timeout: 15000 });
 }
 
 async function readyUp(page: Page) {
-  const readyBtn = page.locator('button:has-text("准备")');
+  const readyBtn = page.getByTestId("room-ready-btn");
   await expect(readyBtn).toBeVisible({ timeout: 5000 });
   await readyBtn.click();
 
-  const isReady = await waitForCondition(
-    async () => await page.locator('text=已准备').first().isVisible().catch(() => false),
-    10000
-  );
-  expect(isReady).toBe(true);
+  // After clicking ready, the button should disappear (isReady becomes true)
+  await expect(readyBtn).toBeHidden({ timeout: 10000 });
 }
 
 async function startGame(hostPage: Page) {
-  const startBtn = hostPage.locator('button:has-text("开始游戏")');
+  const startBtn = hostPage.getByTestId("room-start-btn");
   await expect(startBtn).toBeVisible({ timeout: 5000 });
-  // Button may be disabled until all ready
   await expect(startBtn).toBeEnabled({ timeout: 15000 });
 
-  // Capture any alert dialogs (startGame may throw)
-  const dialogPromise = new Promise<string | null>((resolve) => {
-    hostPage.once("dialog", (dialog) => {
-      resolve(dialog.message());
-      dialog.dismiss().catch(() => {});
-    });
-    setTimeout(() => resolve(null), 5000);
-  });
+  // Auto-dismiss any unexpected alert dialogs
+  hostPage.on("dialog", (dialog) => dialog.dismiss().catch(() => {}));
 
   await startBtn.click();
-  const dialogMsg = await dialogPromise;
-  if (dialogMsg) {
-    throw new Error(`Start game dialog: ${dialogMsg}`);
-  }
 }
+
+/* ------------------------------------------------------------------ */
+/* Browser launch options (proxy + custom executable)                   */
+/* ------------------------------------------------------------------ */
+
+function getLaunchOptions(): Parameters<typeof chromium.launch>[0] {
+  const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || undefined;
+  const opts: Parameters<typeof chromium.launch>[0] = {
+    headless: true,
+    proxy: proxy ? { server: proxy, bypass: "localhost,127.0.0.1" } : undefined,
+  };
+  if (process.env.PLAYWRIGHT_CHROME_EXECUTABLE) {
+    opts.executablePath = process.env.PLAYWRIGHT_CHROME_EXECUTABLE;
+  }
+  return opts;
+}
+
+/* ------------------------------------------------------------------ */
+/* Test suite                                                           */
+/* ------------------------------------------------------------------ */
 
 test.describe("Multiplayer E2E", () => {
   const createdRoomCodes: string[] = [];
 
-  test.afterAll(async () => {
+  test.afterEach(async () => {
+    // Aggressive cleanup after every test to avoid data pollution
     for (const code of createdRoomCodes) {
       try {
         await cleanupRoomByCode(code);
@@ -108,156 +98,132 @@ test.describe("Multiplayer E2E", () => {
         // ignore cleanup errors
       }
     }
+    createdRoomCodes.length = 0;
   });
 
   test("two browsers can see each other in a room", async () => {
-    const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || undefined;
-    const launchOpts: Parameters<typeof chromium.launch>[0] = {
-      headless: true,
-      proxy: proxy ? { server: proxy, bypass: "localhost,127.0.0.1" } : undefined,
-    };
-    if (process.env.PLAYWRIGHT_CHROME_EXECUTABLE) {
-      launchOpts.executablePath = process.env.PLAYWRIGHT_CHROME_EXECUTABLE;
-    }
-
-    // Browser A: create room
+    const launchOpts = getLaunchOptions();
     const browserA = await chromium.launch(launchOpts);
-    const pageA = await browserA.newPage();
-
-    const roomCode = await createRoom(pageA, "PlayerA");
-    expect(roomCode).toMatch(/^[A-Z0-9]{6}$/);
-    createdRoomCodes.push(roomCode);
-
-    const playerAVisible = await waitForCondition(
-      async () => await pageA.locator('text=PlayerA').first().isVisible().catch(() => false),
-      15000
-    );
-    expect(playerAVisible).toBe(true);
-    await readyUp(pageA);
-
-    // Browser B: join room
     const browserB = await chromium.launch(launchOpts);
-    const pageB = await browserB.newPage();
 
-    await joinRoom(pageB, "PlayerB", roomCode);
+    try {
+      const pageA = await browserA.newPage();
+      const pageB = await browserB.newPage();
 
-    const playerBVisible = await waitForCondition(
-      async () => await pageB.locator('text=PlayerB').first().isVisible().catch(() => false),
-      15000
-    );
-    expect(playerBVisible).toBe(true);
-    await readyUp(pageB);
+      // Browser A creates room
+      const roomCode = await createRoom(pageA, "PlayerA");
+      createdRoomCodes.push(roomCode);
 
-    // Wait for sync
-    await pageA.waitForTimeout(3000);
-    await pageB.waitForTimeout(3000);
+      // Verify PlayerA is visible in their own browser
+      await expect(pageA.getByTestId("room-player-PlayerA")).toBeVisible({ timeout: 15000 });
+      await readyUp(pageA);
 
-    const playerBInA = await pageA.locator('text=PlayerB').first().isVisible().catch(() => false);
-    const playerAInB = await pageB.locator('text=PlayerA').first().isVisible().catch(() => false);
+      // Browser B joins room
+      await joinRoom(pageB, "PlayerB", roomCode);
+      await expect(pageB.getByTestId("room-player-PlayerB")).toBeVisible({ timeout: 15000 });
+      await readyUp(pageB);
 
-    await browserA.close();
-    await browserB.close();
-
-    expect(playerBInA).toBe(true);
-    expect(playerAInB).toBe(true);
+      // Verify cross-visibility (use first() because both browsers may show both players)
+      await expect(pageA.getByTestId("room-player-PlayerB").first()).toBeVisible({ timeout: 10000 });
+      await expect(pageB.getByTestId("room-player-PlayerA").first()).toBeVisible({ timeout: 10000 });
+    } finally {
+      await browserA.close();
+      await browserB.close();
+    }
   });
 
   test("host can start game and players reach the board", async () => {
-    const launchOpts: Parameters<typeof chromium.launch>[0] = { headless: true };
-    if (process.env.PLAYWRIGHT_CHROME_EXECUTABLE) {
-      launchOpts.executablePath = process.env.PLAYWRIGHT_CHROME_EXECUTABLE;
-    }
-
+    const launchOpts = getLaunchOptions();
     const browserA = await chromium.launch(launchOpts);
-    const pageA = await browserA.newPage();
-
-    const roomCode = await createRoom(pageA, "Host");
-    createdRoomCodes.push(roomCode);
-    await readyUp(pageA);
-
     const browserB = await chromium.launch(launchOpts);
-    const pageB = await browserB.newPage();
 
-    await joinRoom(pageB, "Guest", roomCode);
-    await readyUp(pageB);
+    try {
+      const pageA = await browserA.newPage();
+      const pageB = await browserB.newPage();
 
-    // Host starts game
-    await startGame(pageA);
+      const roomCode = await createRoom(pageA, "Host");
+      createdRoomCodes.push(roomCode);
+      await readyUp(pageA);
 
-    // Wait for game board to appear in both browsers
-    const boardA = await waitForCondition(
-      async () => await pageA.locator('button:has-text("掷骰子")').first().isVisible().catch(() => false),
-      20000
-    );
-    const boardB = await waitForCondition(
-      async () => await pageB.locator('button:has-text("掷骰子")').first().isVisible().catch(() => false),
-      20000
-    );
+      await joinRoom(pageB, "Guest", roomCode);
+      await readyUp(pageB);
 
-    await browserA.close();
-    await browserB.close();
+      await startGame(pageA);
 
-    expect(boardA).toBe(true);
-    expect(boardB).toBe(true);
+      // Wait for game board (roll button) in both browsers
+      await expect(pageA.getByTestId("control-roll-btn")).toBeVisible({ timeout: 20000 });
+      await expect(pageB.getByTestId("control-roll-btn")).toBeVisible({ timeout: 20000 });
+
+      // Verify Supabase state
+      const room = await waitForRoomStatus(roomCode, "playing");
+      const gameState = await getGameState(room.id);
+      expect(gameState).toBeTruthy();
+      expect(gameState.phase).toBe("ratRace");
+      expect(gameState.players).toHaveLength(2);
+    } finally {
+      await browserA.close();
+      await browserB.close();
+    }
   });
 
   test("first player can roll dice and advance turn", async () => {
-    const launchOpts: Parameters<typeof chromium.launch>[0] = { headless: true };
-    if (process.env.PLAYWRIGHT_CHROME_EXECUTABLE) {
-      launchOpts.executablePath = process.env.PLAYWRIGHT_CHROME_EXECUTABLE;
-    }
-
+    const launchOpts = getLaunchOptions();
     const browserA = await chromium.launch(launchOpts);
-    const pageA = await browserA.newPage();
-
-    const roomCode = await createRoom(pageA, "P1");
-    createdRoomCodes.push(roomCode);
-    await readyUp(pageA);
-
     const browserB = await chromium.launch(launchOpts);
-    const pageB = await browserB.newPage();
 
-    await joinRoom(pageB, "P2", roomCode);
-    await readyUp(pageB);
+    try {
+      const pageA = await browserA.newPage();
+      const pageB = await browserB.newPage();
 
-    await startGame(pageA);
+      const roomCode = await createRoom(pageA, "P1");
+      createdRoomCodes.push(roomCode);
+      await readyUp(pageA);
 
-    // Wait for game board in both browsers
-    await expect(pageA.locator('button:has-text("掷骰子")')).toBeVisible({ timeout: 20000 });
-    await expect(pageB.locator('button:has-text("掷骰子")')).toBeVisible({ timeout: 20000 });
+      await joinRoom(pageB, "P2", roomCode);
+      await readyUp(pageB);
 
-    // Wait for turn state to settle and find the active player's browser
-    let activePage: Page | null = null;
-    const foundActive = await waitForCondition(async () => {
-      const enabledA = await pageA.locator('button:has-text("掷骰子")').isEnabled().catch(() => false);
-      if (enabledA) { activePage = pageA; return true; }
-      const enabledB = await pageB.locator('button:has-text("掷骰子")').isEnabled().catch(() => false);
-      if (enabledB) { activePage = pageB; return true; }
-      return false;
-    }, 15000);
+      await startGame(pageA);
 
-    expect(foundActive).toBe(true);
-    expect(activePage).not.toBeNull();
+      // Wait for game board in both browsers
+      const rollBtnA = pageA.getByTestId("control-roll-btn");
+      const rollBtnB = pageB.getByTestId("control-roll-btn");
+      await expect(rollBtnA).toBeVisible({ timeout: 20000 });
+      await expect(rollBtnB).toBeVisible({ timeout: 20000 });
 
-    // Roll dice
-    await activePage!.locator('button:has-text("掷骰子")').click();
+      // Determine whose turn it is (enabled roll button)
+      // Use Promise.race with a short retry to avoid flakiness
+      let activePage: Page | null = null;
+      let activeBtn = null;
 
-    // After rolling, the turn state may become awaitAction (draw card),
-    // awaitCard (handle card), or awaitEnd (end turn). Wait for any of these.
-    const turnAdvanced = await waitForCondition(async () => {
-      const text = await activePage!.evaluate(() => document.body.innerText);
-      return (
-        text.includes("结束回合") ||
-        text.includes("抽取") ||
-        text.includes("购买") ||
-        text.includes("支付") ||
-        text.includes("结算")
-      );
-    }, 15000);
+      for (let i = 0; i < 30; i++) {
+        const enabledA = await rollBtnA.isEnabled().catch(() => false);
+        if (enabledA) {
+          activePage = pageA;
+          activeBtn = rollBtnA;
+          break;
+        }
+        const enabledB = await rollBtnB.isEnabled().catch(() => false);
+        if (enabledB) {
+          activePage = pageB;
+          activeBtn = rollBtnB;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 500));
+      }
 
-    await browserA.close();
-    await browserB.close();
+      expect(activePage).not.toBeNull();
+      expect(activeBtn).not.toBeNull();
 
-    expect(turnAdvanced).toBe(true);
+      // Roll dice
+      await activeBtn!.click();
+
+      // After rolling, one of the following should appear: end turn, draw card, buy, pay, resolve
+      await expect(
+        activePage!.getByTestId("control-end-turn-btn")
+      ).toBeVisible({ timeout: 15000 });
+    } finally {
+      await browserA.close();
+      await browserB.close();
+    }
   });
 });

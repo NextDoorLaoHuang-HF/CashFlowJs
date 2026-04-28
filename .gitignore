@@ -17,6 +17,7 @@ batch_translate*.txt
 untranslated_texts*.txt
 find_untranslated.py
 test-results
+coverage/
 /git-review-exports/
 .playwright-mcp
 .vercel

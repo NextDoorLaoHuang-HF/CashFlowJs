@@ -88,6 +88,7 @@ export function MultiplayerLobby() {
             className="btn btn-primary"
             onClick={() => setMode("create")}
             style={{ flex: 1 }}
+            data-testid="lobby-create-room-btn"
           >
             {t("zh", "multiplayer.createRoom") || "创建房间"}
           </button>
@@ -95,6 +96,7 @@ export function MultiplayerLobby() {
             className="btn btn-secondary"
             onClick={() => setMode("join")}
             style={{ flex: 1 }}
+            data-testid="lobby-join-room-btn"
           >
             {t("zh", "multiplayer.joinRoom") || "加入房间"}
           </button>
@@ -122,6 +124,7 @@ export function MultiplayerLobby() {
           onChange={(e) => setPlayerName(e.target.value)}
           placeholder={t("zh", "multiplayer.namePlaceholder") || "输入昵称"}
           maxLength={20}
+          data-testid="lobby-name-input"
         />
       </div>
 
@@ -138,6 +141,7 @@ export function MultiplayerLobby() {
             placeholder={t("zh", "multiplayer.codePlaceholder") || "6位房间码"}
             maxLength={6}
             style={{ textTransform: "uppercase", letterSpacing: "0.2em", fontSize: "1.25rem" }}
+            data-testid="lobby-code-input"
           />
         </div>
       )}
@@ -156,6 +160,7 @@ export function MultiplayerLobby() {
             setError(null);
           }}
           style={{ flex: 1 }}
+          data-testid="lobby-back-btn"
         >
           {t("zh", "setup.prev") || "返回"}
         </button>
@@ -164,6 +169,7 @@ export function MultiplayerLobby() {
           onClick={mode === "create" ? handleCreateRoom : handleJoinRoom}
           disabled={isLoading}
           style={{ flex: 1 }}
+          data-testid="lobby-submit-btn"
         >
           {isLoading
             ? t("zh", "multiplayer.loading") || "加载中..."

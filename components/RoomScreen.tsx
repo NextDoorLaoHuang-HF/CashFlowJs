@@ -180,10 +180,10 @@ export function RoomScreen() {
             {t("zh", "room.title") || "房间"}
           </h2>
           <p className="text-muted text-sm" style={{ margin: "0.25rem 0 0 0" }}>
-            {t("zh", "room.code") || "房间码"}: <strong style={{ fontSize: "1.25rem", letterSpacing: "0.15em" }}>{store.roomCode}</strong>
+            {t("zh", "room.code") || "房间码"}: <strong style={{ fontSize: "1.25rem", letterSpacing: "0.15em" }} data-testid="room-code-display">{store.roomCode}</strong>
           </p>
         </div>
-        <button className="btn btn-sm btn-danger" onClick={handleLeave}>
+        <button className="btn btn-sm btn-danger" onClick={handleLeave} data-testid="room-leave-btn">
           {t("zh", "room.leave") || "离开"}
         </button>
       </div>
@@ -192,10 +192,12 @@ export function RoomScreen() {
         <h3 style={{ fontSize: "1rem", marginBottom: "0.75rem" }}>
           {t("zh", "room.players") || "玩家列表"} ({players.length}/6)
         </h3>
+        <div data-testid="room-players-list">
         {players.map((player) => (
           <div
             key={player.id}
             className="player-row"
+            data-testid={`room-player-${player.name}`}
             style={{
               display: "flex",
               alignItems: "center",
@@ -242,6 +244,7 @@ export function RoomScreen() {
             />
           </div>
         ))}
+        </div>
       </div>
 
       {!isReady && (
@@ -282,6 +285,7 @@ export function RoomScreen() {
             onClick={handleReady}
             disabled={isLoading}
             style={{ marginTop: "1rem", width: "100%" }}
+            data-testid="room-ready-btn"
           >
             {isLoading
               ? t("zh", "multiplayer.loading") || "加载中..."
@@ -297,6 +301,7 @@ export function RoomScreen() {
             onClick={handleStartGame}
             disabled={!canStart || isLoading}
             style={{ width: "100%" }}
+            data-testid="room-start-btn"
           >
             {isLoading
               ? t("zh", "multiplayer.loading") || "加载中..."

@@ -532,10 +532,11 @@ export function ControlPanel() {
           disabled={!canRoll}
           className="btn btn-primary"
           style={{ flex: "1 1 150px" }}
+          data-testid="control-roll-btn"
         >
           {t(settings.locale, "controls.roll")}
         </button>
-        <button onClick={nextPlayer} disabled={!canEndTurn} className="btn btn-secondary" style={{ flex: "1 1 150px" }}>
+        <button onClick={nextPlayer} disabled={!canEndTurn} className="btn btn-secondary" style={{ flex: "1 1 150px" }} data-testid="control-end-turn-btn">
           {t(settings.locale, "controls.endTurn")}
         </button>
         {currentPlayer && currentPlayer.fastTrackUnlocked && currentPlayer.track === "ratRace" && (

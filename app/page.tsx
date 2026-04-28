@@ -74,6 +74,7 @@ export default function Page() {
                 className="btn btn-primary btn-lg"
                 onClick={() => setAppMode("local")}
                 style={{ justifyContent: "center", padding: "1rem" }}
+                data-testid="menu-local-btn"
               >
                 {t(settings.locale, "mode.local") || "本地游戏"}
                 <span className="text-muted text-sm" style={{ display: "block", marginTop: "0.25rem" }}>
@@ -84,6 +85,7 @@ export default function Page() {
                 className="btn btn-secondary btn-lg"
                 onClick={() => setAppMode("multiplayer")}
                 style={{ justifyContent: "center", padding: "1rem" }}
+                data-testid="menu-multiplayer-btn"
               >
                 {t(settings.locale, "mode.multiplayer") || "联机游戏"}
                 <span className="text-muted text-sm" style={{ display: "block", marginTop: "0.25rem" }}>
