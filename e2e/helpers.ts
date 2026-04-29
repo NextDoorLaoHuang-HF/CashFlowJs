@@ -137,7 +137,7 @@ export async function injectAnonSession(
   // 2. Set localStorage BEFORE page loads so Supabase client reads it on init.
   //    Using addInitScript ensures the value is present when JS first runs.
   await page.addInitScript(
-    ({ key, value }) => {
+    ({ key, value }: { key: string; value: string }) => {
       localStorage.setItem(key, value);
     },
     { key: storageKey, value: JSON.stringify(payload) }
