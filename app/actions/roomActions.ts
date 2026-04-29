@@ -60,7 +60,14 @@ export async function joinRoom(code: string, userId: string, name: string, color
     .single();
 
   if (existingPlayer) {
-    return { room, player: existingPlayer };
+    // Reconnect: update name/color in case user changed them
+    const { data: updated } = await supabase
+      .from("room_players")
+      .update({ name, color })
+      .eq("id", existingPlayer.id)
+      .select()
+      .single();
+    return { room, player: updated ?? existingPlayer };
   }
 
   // Find next available slot
@@ -223,7 +230,7 @@ export async function getRoomState(roomId: string) {
   const [{ data: room }, { data: players }, { data: gameState }] = await Promise.all([
     supabase.from("rooms").select("*").eq("id", roomId).single(),
     supabase.from("room_players").select("*").eq("room_id", roomId).order("player_slot", { ascending: true }),
-    supabase.from("game_states").select("*").eq("room_id", roomId).single()
+    supabase.from("game_states").select("*").eq("room_id", roomId).maybeSingle()
   ]);
 
   return { room, players: players ?? [], gameState };

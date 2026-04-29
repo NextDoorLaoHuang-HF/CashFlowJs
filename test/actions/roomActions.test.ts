@@ -47,6 +47,11 @@ class MockSupabase {
     return Promise.resolve(next);
   });
 
+  maybeSingle = vi.fn(() => {
+    const next = this.singleResponses.shift() ?? { data: null, error: null };
+    return Promise.resolve(next);
+  });
+
   private chain: any = new Proxy(this, {
     get(target, prop) {
       if (prop === "then") {
