@@ -2,6 +2,7 @@
 
 import { useMultiplayerStore } from "./syncStore";
 import { useGameStore } from "../state/gameStore";
+import { toUnsignedInt32 } from "../utils/intConverter";
 import type { GameEngineState } from "../engine/types";
 import type { GameSettings, Player } from "../types";
 
@@ -10,6 +11,7 @@ import type { GameSettings, Player } from "../types";
  * then sync it into both multiplayerStore and gameStore.
  */
 export function syncServerRecordToStores(record: Record<string, unknown>) {
+  console.log("[syncState] record keys:", Object.keys(record), "version:", record.version);
   const serverState: Partial<GameEngineState> = {
     phase: record.phase as GameEngineState["phase"],
     players: record.players as Player[],
@@ -23,8 +25,8 @@ export function syncServerRecordToStores(record: Record<string, unknown>) {
     turn: record.turn as number,
     logs: record.logs as GameEngineState["logs"],
     settings: record.settings as GameSettings,
-    rngSeed: record.rng_seed as number,
-    rngState: record.rng_state as number,
+    rngSeed: toUnsignedInt32(record.rng_seed as number),
+    rngState: toUnsignedInt32(record.rng_state as number),
     decks: record.decks as GameEngineState["decks"],
     discard: record.discard as GameEngineState["discard"],
     ventures: record.ventures as GameEngineState["ventures"],
@@ -49,5 +51,5 @@ export function syncServerRecordToStores(record: Record<string, unknown>) {
     version: record.version as number
   });
 
-  useGameStore.getState().syncMultiplayerState(serverState);
+  useGameStore.getState().syncMultiplayerState({ ...serverState, version: record.version as number });
 }

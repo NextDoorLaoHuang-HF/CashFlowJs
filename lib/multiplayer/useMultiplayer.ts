@@ -8,12 +8,49 @@ import { getRoomState } from "../../app/actions/roomActions";
 import { syncServerRecordToStores } from "./syncState";
 import type { GameAction } from "../engine/gameEngine";
 
+export async function sendGameAction(action: GameAction, retryCount = 0) {
+  const store = useMultiplayerStore.getState();
+  const { roomId, userId } = store;
+  if (!roomId || !userId) {
+    store.setError("Not connected to a room");
+    return;
+  }
+
+  store.setLoading(true);
+  store.setError(null);
+
+  try {
+    const result = await submitAction(roomId, userId, action, store.stateVersion);
+
+    if (!result.success && "conflict" in result && result.conflict) {
+      if (result.currentState) {
+        syncServerRecordToStores(result.currentState as Record<string, unknown>);
+      }
+      if (retryCount < 1) {
+        // Auto-retry once after syncing latest state
+        store.setError("State updated, retrying...");
+        await sendGameAction(action, retryCount + 1);
+        return;
+      }
+      store.setError("Action conflict - state has changed. Please retry.");
+    } else if (result.success) {
+      store.markActionSent();
+      if (result.state) {
+        syncServerRecordToStores({ ...result.state, version: result.version } as unknown as Record<string, unknown>);
+      }
+    }
+  } catch (err) {
+    store.setError(err instanceof Error ? err.message : "Unknown error");
+  } finally {
+    store.setLoading(false);
+  }
+}
+
 export function useMultiplayer() {
   const roomId = useMultiplayerStore((s) => s.roomId);
   const userId = useMultiplayerStore((s) => s.userId);
-  const stateVersion = useMultiplayerStore((s) => s.stateVersion);
-  const playerSlot = useMultiplayerStore((s) => s.playerSlot);
   const currentPlayerId = useMultiplayerStore((s) => s.currentPlayerId);
+  const playerSlot = useMultiplayerStore((s) => s.playerSlot);
   const players = useMultiplayerStore((s) => s.players);
 
   // Initial fetch + Realtime subscription for state sync
@@ -87,43 +124,10 @@ export function useMultiplayer() {
   }, [roomId]);
 
   const sendAction = useCallback(
-    async (action: GameAction, retryCount = 0) => {
-      if (!roomId || !userId) {
-        useMultiplayerStore.getState().setError("Not connected to a room");
-        return;
-      }
-
-      const store = useMultiplayerStore.getState();
-      store.setLoading(true);
-      store.setError(null);
-
-      try {
-        const result = await submitAction(roomId, userId, action, store.stateVersion);
-
-        if (!result.success && "conflict" in result && result.conflict) {
-          if (result.currentState) {
-            syncServerRecordToStores(result.currentState as Record<string, unknown>);
-          }
-          if (retryCount < 1) {
-            // Auto-retry once after syncing latest state
-            store.setError("State updated, retrying...");
-            await sendAction(action, retryCount + 1);
-            return;
-          }
-          store.setError("Action conflict - state has changed. Please retry.");
-        } else if (result.success) {
-          store.markActionSent();
-          if (result.state) {
-            syncServerRecordToStores(result.state as unknown as Record<string, unknown>);
-          }
-        }
-      } catch (err) {
-        store.setError(err instanceof Error ? err.message : "Unknown error");
-      } finally {
-        store.setLoading(false);
-      }
+    async (action: GameAction) => {
+      await sendGameAction(action);
     },
-    [roomId, userId]
+    []
   );
 
   const isMyTurn = currentPlayerId !== null && players[playerSlot ?? -1]?.id === currentPlayerId;

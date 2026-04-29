@@ -113,6 +113,7 @@ type GameStore = {
   settings: GameSettings;
   history: Array<{ turn: number; players: Player[] }>;
   charityPrompt?: CharityPrompt;
+  multiplayerStateVersion: number;
   initGame: (payload: SetupPayload) => void;
   addLog: (message: string, payload?: Record<string, unknown>, playerId?: string) => void;
   beginTurn: () => void;
@@ -145,7 +146,7 @@ type GameStore = {
   enterFastTrack: (playerId: string) => void;
   sellLiquidationAsset: (assetId: string, quantity: number) => void;
   finalizeLiquidation: () => void;
-  syncMultiplayerState: (state: Partial<GameEngineState>) => void;
+  syncMultiplayerState: (state: Partial<GameEngineState> & { version?: number }) => void;
 };
 
 const defaultSettings: GameSettings = {
@@ -872,6 +873,7 @@ export const useGameStore = create<GameStore>((set, get) => {
 	    settings: defaultSettings,
 	    history: [],
 	    charityPrompt: undefined,
+    multiplayerStateVersion: 0,
     beginTurn,
     initGame: ({ players: playerSetups, settings }) => {
     const mergedSettings = { ...get().settings, ...settings };
@@ -3378,8 +3380,16 @@ export const useGameStore = create<GameStore>((set, get) => {
     );
   },
   syncMultiplayerState: (serverState) => {
+    const incomingVersion = serverState.version ?? 0;
+    const currentVersion = get().multiplayerStateVersion;
+    console.log("[gameStore] syncMultiplayerState called", { incomingVersion, currentVersion, phase: serverState.phase, playersLen: serverState.players?.length });
+    if (incomingVersion < currentVersion) {
+      console.warn("[syncMultiplayerState] Ignoring stale server state", { incomingVersion, currentVersion });
+      return;
+    }
     set(
       produce<GameStore>((draft) => {
+        draft.multiplayerStateVersion = incomingVersion;
         if (serverState.phase !== undefined) draft.phase = serverState.phase;
         if (serverState.players !== undefined) draft.players = serverState.players;
         if (serverState.currentPlayerId !== undefined) draft.currentPlayerId = serverState.currentPlayerId;
@@ -3405,3 +3415,8 @@ export const useGameStore = create<GameStore>((set, get) => {
   }
   };
 });
+
+// Expose store to window for E2E diagnostics (dev only)
+if (typeof window !== "undefined") {
+  (window as any).__gameStore = useGameStore;
+}

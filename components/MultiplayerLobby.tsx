@@ -15,6 +15,19 @@ export function MultiplayerLobby() {
 
   const store = useMultiplayerStore();
 
+  const getUserId = async (): Promise<string> => {
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.user?.id) {
+      return session.user.id;
+    }
+    const { data: authData, error: authError } = await supabase.auth.signInAnonymously();
+    if (authError) throw authError;
+    const userId = authData.user?.id;
+    if (!userId) throw new Error("Failed to authenticate");
+    return userId;
+  };
+
   const handleCreateRoom = async () => {
     if (!playerName.trim()) {
       setError("Please enter your name");
@@ -25,13 +38,7 @@ export function MultiplayerLobby() {
     setError(null);
 
     try {
-      const supabase = createClient();
-      const { data: authData, error: authError } = await supabase.auth.signInAnonymously();
-      if (authError) throw authError;
-
-      const userId = authData.user?.id;
-      if (!userId) throw new Error("Failed to authenticate");
-
+      const userId = await getUserId();
       const room = await createRoom(userId);
 
       // Auto-join as host
@@ -59,13 +66,7 @@ export function MultiplayerLobby() {
     setError(null);
 
     try {
-      const supabase = createClient();
-      const { data: authData, error: authError } = await supabase.auth.signInAnonymously();
-      if (authError) throw authError;
-
-      const userId = authData.user?.id;
-      if (!userId) throw new Error("Failed to authenticate");
-
+      const userId = await getUserId();
       const { room, player } = await joinRoom(roomCode.trim(), userId, playerName.trim(), "#3b82f6");
 
       store.setRoom(room.id, room.code, userId, player.player_slot, false);

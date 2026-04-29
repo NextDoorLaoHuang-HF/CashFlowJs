@@ -6,6 +6,9 @@ import { t } from "../lib/i18n";
 import { useIsMobile } from "../lib/hooks/useIsMobile";
 import { translateCardText } from "../lib/cardTranslations";
 import { type DeckKey, useGameStore } from "../lib/state/gameStore";
+import { sendGameAction } from "../lib/multiplayer/useMultiplayer";
+import { useMultiplayerStore } from "../lib/multiplayer/syncStore";
+import type { GameAction } from "../lib/engine/types";
 import {
   cardMentionsEveryone,
   getAssetAvailableQuantity,
@@ -89,6 +92,14 @@ export function ControlPanel() {
 
   const isMobile = useIsMobile();
   const [diceRolling, setDiceRolling] = useState(false);
+  const isMultiplayer = useMultiplayerStore((s) => s.roomId) !== null;
+
+  const dispatch = async (action: GameAction, localFn?: () => void) => {
+    if (localFn) localFn();
+    if (isMultiplayer) {
+      await sendGameAction(action);
+    }
+  };
   const currentPlayer = useMemo(() => players.find((player) => player.id === currentPlayerId), [players, currentPlayerId]);
   const [liquidationQuantities, setLiquidationQuantities] = useState<Record<string, number>>({});
   const currentSquare = useMemo(() => {
@@ -163,10 +174,10 @@ export function ControlPanel() {
           {t(settings.locale, "controls.charity.amountLabel")}: ${charityPrompt.amount.toLocaleString()}
         </div>
         <div className="action-row">
-          <button onClick={donateCharity} className="btn btn-primary" style={{ flex: 1 }}>
+          <button onClick={() => dispatch({ type: "donateCharity" }, donateCharity)} className="btn btn-primary" style={{ flex: 1 }}>
             {t(settings.locale, "controls.charity.donate")}
           </button>
-          <button onClick={skipCharity} className="btn btn-secondary" style={{ flex: 1 }}>
+          <button onClick={() => dispatch({ type: "skipCharity" }, skipCharity)} className="btn btn-secondary" style={{ flex: 1 }} data-testid="control-charity-skip-btn">
             {t(settings.locale, "controls.charity.skip")}
           </button>
         </div>
@@ -229,7 +240,7 @@ export function ControlPanel() {
                       className="field-input"
                     />
                     <button
-                      onClick={() => sellLiquidationAsset(asset.id, normalized)}
+                      onClick={() => dispatch({ type: "sellLiquidationAsset", assetId: asset.id, quantity: normalized }, () => sellLiquidationAsset(asset.id, normalized))}
                       disabled={!canSell}
                       className="btn btn-danger btn-sm"
                     >
@@ -244,7 +255,7 @@ export function ControlPanel() {
 
         <div className="action-row">
           <button
-            onClick={finalizeLiquidation}
+            onClick={() => dispatch({ type: "finalizeLiquidation" }, finalizeLiquidation)}
             disabled={currentPlayer.cash < liquidationSession.requiredCash}
             className="btn btn-primary"
             style={{ flex: 1 }}
@@ -252,7 +263,7 @@ export function ControlPanel() {
             {t(settings.locale, "liquidation.pay")}
           </button>
           <button
-            onClick={finalizeLiquidation}
+            onClick={() => dispatch({ type: "finalizeLiquidation" }, finalizeLiquidation)}
             disabled={currentPlayer.cash >= liquidationSession.requiredCash}
             className="btn btn-secondary"
             style={{ flex: 1 }}
@@ -334,10 +345,10 @@ export function ControlPanel() {
     if (!shouldUseSession) {
       return (
         <div className="action-row">
-          <button onClick={() => resolveMarket()} className="btn btn-primary" style={{ flex: 1 }}>
+          <button onClick={() => dispatch({ type: "resolveMarket" }, () => resolveMarket())} className="btn btn-primary" style={{ flex: 1 }} data-testid="control-market-resolve-btn">
             {t(settings.locale, "controls.resolve")}
           </button>
-          <button onClick={skipMarketAll} className="btn btn-secondary" style={{ flex: 1 }}>
+          <button onClick={() => dispatch({ type: "skipMarketAll" }, skipMarketAll)} className="btn btn-secondary" style={{ flex: 1 }} data-testid="control-market-skip-btn">
             {t(settings.locale, "market.skipAll")}
           </button>
         </div>
@@ -401,9 +412,10 @@ export function ControlPanel() {
                       max={available}
                       step={1}
                       value={currentValue}
-                      onChange={(e) =>
-                        setMarketSellQuantity(asset.id, Math.max(0, Math.floor(Number(e.target.value) || 0)))
-                      }
+                      onChange={(e) => {
+                        const qty = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                        dispatch({ type: "setMarketSellQuantity", assetId: asset.id, quantity: qty }, () => setMarketSellQuantity(asset.id, qty));
+                      }}
                       className="field-input"
                     />
                   </label>
@@ -413,10 +425,10 @@ export function ControlPanel() {
           )}
 
           <div className="action-row">
-            <button onClick={confirmMarketStep} className="btn btn-primary" style={{ flex: 1 }}>
+            <button onClick={() => dispatch({ type: "confirmMarketStep" }, confirmMarketStep)} className="btn btn-primary" style={{ flex: 1 }}>
               {confirmLabel}
             </button>
-            <button onClick={skipMarketAll} className="btn btn-secondary" style={{ flex: 1 }}>
+            <button onClick={() => dispatch({ type: "skipMarketAll" }, skipMarketAll)} className="btn btn-secondary" style={{ flex: 1 }}>
               {t(settings.locale, "market.skipAll")}
             </button>
           </div>
@@ -435,7 +447,10 @@ export function ControlPanel() {
               min={0}
               step={1}
               value={buyQuantity}
-              onChange={(e) => setMarketBuyQuantity(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+              onChange={(e) => {
+                const qty = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                dispatch({ type: "setMarketBuyQuantity", quantity: qty }, () => setMarketBuyQuantity(qty));
+              }}
               className="field-input"
             />
             <span className="text-muted text-sm">
@@ -445,10 +460,10 @@ export function ControlPanel() {
           </label>
 
           <div className="action-row">
-            <button onClick={confirmMarketStep} className="btn btn-primary" style={{ flex: 1 }}>
+            <button onClick={() => dispatch({ type: "confirmMarketStep" }, confirmMarketStep)} className="btn btn-primary" style={{ flex: 1 }}>
               {t(settings.locale, "controls.resolve")}
             </button>
-            <button onClick={skipMarketAll} className="btn btn-secondary" style={{ flex: 1 }}>
+            <button onClick={() => dispatch({ type: "skipMarketAll" }, skipMarketAll)} className="btn btn-secondary" style={{ flex: 1 }}>
               {t(settings.locale, "market.skipAll")}
             </button>
           </div>
@@ -466,7 +481,7 @@ export function ControlPanel() {
         <div className="panel-header">
           <strong>{translateCardText(settings.locale, selectedCard.name)}</strong>
           <button
-            onClick={passSelectedCard}
+            onClick={() => dispatch({ type: "passSelectedCard" }, passSelectedCard)}
             disabled={!canPass}
             className="btn btn-sm btn-secondary"
           >
@@ -489,18 +504,20 @@ export function ControlPanel() {
 
         <div className="action-row">
           <button
-            onClick={applySelectedCard}
+            onClick={() => dispatch({ type: "applySelectedCard" }, applySelectedCard)}
             disabled={!canApply}
             className={clsx("btn", isExpense ? "btn-danger" : "btn-primary")}
             style={{ flex: 1 }}
+            data-testid="control-card-apply-btn"
           >
             {t(settings.locale, primaryActionKey) ?? "Apply"}
           </button>
           <button
-            onClick={passSelectedCard}
+            onClick={() => dispatch({ type: "passSelectedCard" }, passSelectedCard)}
             disabled={!canPass}
             className="btn btn-secondary"
             style={{ flex: 1 }}
+            data-testid="control-card-pass-btn"
           >
             {t(settings.locale, "controls.pass")}
           </button>
@@ -526,7 +543,7 @@ export function ControlPanel() {
         <button
           onClick={() => {
             setDiceRolling(true);
-            rollDice();
+            dispatch({ type: "rollDice" }, rollDice);
             setTimeout(() => setDiceRolling(false), 600);
           }}
           disabled={!canRoll}
@@ -536,12 +553,12 @@ export function ControlPanel() {
         >
           {t(settings.locale, "controls.roll")}
         </button>
-        <button onClick={nextPlayer} disabled={!canEndTurn} className="btn btn-secondary" style={{ flex: "1 1 150px" }} data-testid="control-end-turn-btn">
+        <button onClick={() => dispatch({ type: "nextPlayer" }, nextPlayer)} disabled={!canEndTurn} className="btn btn-secondary" style={{ flex: "1 1 150px" }} data-testid="control-end-turn-btn">
           {t(settings.locale, "controls.endTurn")}
         </button>
         {currentPlayer && currentPlayer.fastTrackUnlocked && currentPlayer.track === "ratRace" && (
           <button
-            onClick={() => enterFastTrack(currentPlayer.id)}
+            onClick={() => dispatch({ type: "enterFastTrack", playerId: currentPlayer.id }, () => enterFastTrack(currentPlayer.id))}
             disabled={!canEndTurn}
             className="btn btn-secondary"
             style={{ flex: "1 1 150px", borderColor: "rgba(251,191,36,0.3)" }}
@@ -563,9 +580,10 @@ export function ControlPanel() {
           return (
             <button
               key={deck}
-              onClick={() => drawCard(deck)}
+              onClick={() => dispatch({ type: "drawCard", deck }, () => drawCard(deck))}
               disabled={!enabled}
               className={clsx("btn", enabled ? "btn-secondary" : "btn-secondary deck-disabled")}
+              data-testid={`control-draw-${deck}-btn`}
             >
               {t(settings.locale, deckLabels[deck])}
             </button>

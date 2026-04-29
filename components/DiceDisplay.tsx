@@ -89,6 +89,7 @@ export function DiceDisplay({ dice, total, isRolling = false, size = "md" }: Dic
         ))}
       </div>
       <span
+        data-testid="dice-total"
         style={{
           fontSize: faceSize * 0.9,
           fontWeight: 800,

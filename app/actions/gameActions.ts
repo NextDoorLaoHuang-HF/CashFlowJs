@@ -86,6 +86,9 @@ export async function submitAction(
   const result = applyAction(state, action);
 
   // Save new state
+  // Supabase .update() ignores undefined values, so we must explicitly
+  // convert undefined -> null for fields that can be cleared.
+  const nullIfUndefined = <T>(v: T | undefined): T | null => (v === undefined ? null : v);
   const newVersion = (gameState.version ?? 0) + 1;
   const { error: saveError } = await supabase
     .from("game_states")
@@ -97,17 +100,17 @@ export async function submitAction(
       players: result.state.players,
       decks: result.state.decks,
       discard: result.state.discard,
-      selected_card: result.state.selectedCard,
-      market_session: result.state.marketSession,
-      liquidation_session: result.state.liquidationSession,
-      dice: result.state.dice,
+      selected_card: nullIfUndefined(result.state.selectedCard),
+      market_session: nullIfUndefined(result.state.marketSession),
+      liquidation_session: nullIfUndefined(result.state.liquidationSession),
+      dice: nullIfUndefined(result.state.dice),
       logs: [...result.state.logs, ...result.logs],
       replay_frames: [...result.state.replayFrames, ...result.frames],
       ventures: result.state.ventures,
       loans: result.state.loans,
       settings: result.state.settings,
       history: result.state.history,
-      charity_prompt: result.state.charityPrompt,
+      charity_prompt: nullIfUndefined(result.state.charityPrompt),
       rng_seed: toSignedInt32(result.state.rngSeed),
       rng_state: toSignedInt32(result.state.rngState),
       version: newVersion,
