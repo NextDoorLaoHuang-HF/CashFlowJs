@@ -11,7 +11,7 @@
 - P1：补齐资产/负债报表与交互（卖出资产、还款银行贷款、选择性卖出 Offer）
 - P2：实现 Offer/Stock 的 “Everyone may sell” 全员响应窗口（按回合顺序可复盘）
 - P3：外圈（Fast Track）事件表数据化（如需对齐 `legacy/js/fasttrack.js`，必须先修复旧版 bug 再移植）
-- 规则/架构变更流程：先更新 `docs/game-rules-spec.md` / `docs/architecture.md`，再改代码，最后 `npm run lint` + `npm run test` + `npm run test:e2e`
+- 规则/架构变更流程：先更新 `docs/game-rules-spec.md` / `docs/architecture.md`，再改代码，最后 `npm run lint` + `npm run build` + `npm run test` + `npm run test:e2e`
 
 ## Project Structure & Module Organization
 - `app/`: Next.js App Router entry (`layout.tsx`, `page.tsx`) plus API route `api/llm/route.ts`.
@@ -33,7 +33,7 @@
 - `npm run test` — Vitest 单元测试（UI primitives + gameStore reducers）。
 - `npm run test:coverage` — Vitest 覆盖率报告。
 - `npm run test:e2e` — Playwright 端到端测试（多人游戏流程）。
-- **提交流程**：`npm run lint` → `npm run test` → `npm run test:e2e` 全部通过后提交。
+- **提交流程**：`npm run lint` → `npm run build` → `npm run test` → `npm run test:e2e` 全部通过后提交。
 
 ## Coding Style & Naming Conventions
 - TypeScript with `strict` mode; mark interactive components with `"use client"`.
