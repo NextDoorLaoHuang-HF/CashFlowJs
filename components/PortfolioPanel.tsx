@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useGameStore } from "../lib/state/gameStore";
+import { useMultiplayerStore } from "../lib/multiplayer/syncStore";
 import { t } from "../lib/i18n";
 import type { Asset, Liability, PlayerLoan } from "../lib/types";
 
@@ -41,44 +42,55 @@ export function PortfolioPanel() {
     sellFireSaleAsset: state.sellFireSaleAsset
   }));
 
-  const currentPlayer = useMemo(
-    () => players.find((player) => player.id === currentPlayerId),
-    [players, currentPlayerId]
-  );
+  const playerSlot = useMultiplayerStore((s) => s.playerSlot);
+
+  const viewPlayer = useMemo(() => {
+    if (playerSlot !== null) {
+      return players[playerSlot];
+    }
+    return players.find((player) => player.id === currentPlayerId);
+  }, [players, currentPlayerId, playerSlot]);
 
   const [fireSaleQuantities, setFireSaleQuantities] = useState<Record<string, number>>({});
 
-  const assetsByCategory = useMemo(() => groupAssetsByCategory(currentPlayer?.assets ?? []), [currentPlayer?.assets]);
+  // P4: reset fire-sale quantities when the viewed player changes
+  useEffect(() => {
+    setFireSaleQuantities({});
+  }, [viewPlayer?.id]);
+
+  const assetsByCategory = useMemo(() => groupAssetsByCategory(viewPlayer?.assets ?? []), [viewPlayer?.assets]);
 
   const bankLoans = useMemo(
-    () => (currentPlayer?.liabilities ?? []).filter((liability) => liability.metadata?.bank),
-    [currentPlayer?.liabilities]
+    () => (viewPlayer?.liabilities ?? []).filter((liability) => liability.metadata?.bank),
+    [viewPlayer?.liabilities]
   );
 
   const otherLiabilities = useMemo(
-    () => (currentPlayer?.liabilities ?? []).filter((liability) => !liability.metadata?.bank),
-    [currentPlayer?.liabilities]
+    () => (viewPlayer?.liabilities ?? []).filter((liability) => !liability.metadata?.bank),
+    [viewPlayer?.liabilities]
   );
 
-  const playerLoans = useMemo(() => {
-    const borrowerLoans = loans.filter((loan) => loan.status === "active" && loan.borrowerId === currentPlayerId);
-    const lenderLoans = loans.filter((loan) => loan.status === "active" && loan.lenderId === currentPlayerId);
-    return { borrowerLoans, lenderLoans };
-  }, [loans, currentPlayerId]);
+  const viewPlayerId = viewPlayer?.id;
 
-  if (!currentPlayer) {
+  const playerLoans = useMemo(() => {
+    const borrowerLoans = loans.filter((loan) => loan.status === "active" && loan.borrowerId === viewPlayerId);
+    const lenderLoans = loans.filter((loan) => loan.status === "active" && loan.lenderId === viewPlayerId);
+    return { borrowerLoans, lenderLoans };
+  }, [loans, viewPlayerId]);
+
+  if (!viewPlayer) {
     return null;
   }
 
   const canRepayNow = turnState === "awaitEnd";
-  const showLoanActions = currentPlayer.track === "ratRace";
+  const showLoanActions = viewPlayer.track === "ratRace";
   const canFireSaleNow =
-    currentPlayer.track === "ratRace" &&
+    viewPlayer.track === "ratRace" &&
     turnState !== "awaitCard" &&
     turnState !== "awaitMarket" &&
     turnState !== "awaitCharity" &&
     turnState !== "awaitLiquidation" &&
-    currentPlayer.status !== "bankrupt";
+    viewPlayer.status !== "bankrupt";
 
   const renderAssetRow = (asset: Asset) => {
     const quantity = typeof asset.quantity === "number" && Number.isFinite(asset.quantity) ? Math.floor(asset.quantity) : 1;
@@ -153,8 +165,8 @@ export function PortfolioPanel() {
 
   const renderLiabilityRow = (liability: Liability) => {
     const isBank = Boolean(liability.metadata?.bank);
-    const canRepayStep = showLoanActions && isBank && canRepayNow && liability.balance >= REPAY_STEP && currentPlayer.cash >= REPAY_STEP;
-    const canPayoff = showLoanActions && isBank && canRepayNow && liability.balance > 0 && currentPlayer.cash >= liability.balance;
+    const canRepayStep = showLoanActions && isBank && canRepayNow && liability.balance >= REPAY_STEP && viewPlayer.cash >= REPAY_STEP;
+    const canPayoff = showLoanActions && isBank && canRepayNow && liability.balance > 0 && viewPlayer.cash >= liability.balance;
 
     return (
       <div key={liability.id} className="asset-row">
@@ -207,21 +219,21 @@ export function PortfolioPanel() {
       <div className="panel-header">
         <h3 className="text-base" style={{ margin: 0 }}>{t(settings.locale, "portfolio.title")}</h3>
         <span className="text-muted text-sm">
-          {t(settings.locale, "portfolio.player")}: {currentPlayer.name}
+          {t(settings.locale, "portfolio.player")}: {viewPlayer.name}
         </span>
       </div>
 
       <div className="panel-body">
         <details open>
           <summary style={{ cursor: "pointer" }}>
-            {t(settings.locale, "portfolio.assets.title")} · {currentPlayer.assets.length}
+            {t(settings.locale, "portfolio.assets.title")} · {viewPlayer.assets.length}
           </summary>
-          {currentPlayer.track === "ratRace" && (
+          {viewPlayer.track === "ratRace" && (
             <p className="text-muted text-sm" style={{ margin: "0.35rem 0 0" }}>
               {t(settings.locale, "portfolio.fireSale.hint")}
             </p>
           )}
-          {currentPlayer.assets.length === 0 ? (
+          {viewPlayer.assets.length === 0 ? (
             <p className="text-muted text-sm" style={{ margin: "0.5rem 0 0" }}>
               {t(settings.locale, "portfolio.assets.empty")}
             </p>
@@ -245,9 +257,9 @@ export function PortfolioPanel() {
 
         <details open>
           <summary style={{ cursor: "pointer" }}>
-            {t(settings.locale, "portfolio.liabilities.title")} · {currentPlayer.liabilities.length}
+            {t(settings.locale, "portfolio.liabilities.title")} · {viewPlayer.liabilities.length}
           </summary>
-          {currentPlayer.liabilities.length === 0 ? (
+          {viewPlayer.liabilities.length === 0 ? (
             <p className="text-muted text-sm" style={{ margin: "0.5rem 0 0" }}>
               {t(settings.locale, "portfolio.liabilities.empty")}
             </p>
@@ -288,7 +300,7 @@ export function PortfolioPanel() {
                   </div>
                   {playerLoans.borrowerLoans.map((loan) => {
                     const counterparty = getLoanCounterparty(loan, players, "borrower");
-                    const canPayoff = showLoanActions && canRepayNow && currentPlayer.cash >= loan.remaining;
+                    const canPayoff = showLoanActions && canRepayNow && viewPlayer.cash >= loan.remaining;
                     return (
                       <div key={loan.id} className="asset-row">
                         <div className="asset-row-header">

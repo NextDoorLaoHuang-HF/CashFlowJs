@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { clsx } from "clsx";
 import { t } from "../lib/i18n";
 import { useIsMobile } from "../lib/hooks/useIsMobile";
@@ -93,6 +93,7 @@ export function ControlPanel() {
   const isMobile = useIsMobile();
   const [diceRolling, setDiceRolling] = useState(false);
   const isMultiplayer = useMultiplayerStore((s) => s.roomId) !== null;
+  const playerSlot = useMultiplayerStore((s) => s.playerSlot);
 
   const dispatch = async (action: GameAction, localFn?: () => void) => {
     if (localFn) localFn();
@@ -101,7 +102,21 @@ export function ControlPanel() {
     }
   };
   const currentPlayer = useMemo(() => players.find((player) => player.id === currentPlayerId), [players, currentPlayerId]);
+
+  const myPlayer = useMemo(() => {
+    if (playerSlot !== null) {
+      return players[playerSlot];
+    }
+    return currentPlayer;
+  }, [playerSlot, players, currentPlayer]);
+
+  const isMyTurn = playerSlot === null || (currentPlayerId !== null && myPlayer?.id === currentPlayerId);
   const [liquidationQuantities, setLiquidationQuantities] = useState<Record<string, number>>({});
+
+  // P4: reset liquidation quantities when the session player changes
+  useEffect(() => {
+    setLiquidationQuantities({});
+  }, [liquidationSession?.playerId]);
   const currentSquare = useMemo(() => {
     if (!currentPlayer) return undefined;
     const trackSquares = currentPlayer.track === "fastTrack" ? fastTrackBoard : board;
@@ -115,11 +130,12 @@ export function ControlPanel() {
   const cardCashflow = cardPreview?.cashflow ?? 0;
   const isOpportunitySquare = currentPlayer?.track === "ratRace" && currentSquare?.type === "OPPORTUNITY";
   const dealsDisabled = !settings.enableSmallDeals && !settings.enableBigDeals;
-  const charityPending = charityPrompt && charityPrompt.playerId === currentPlayerId;
-  const canRoll = turnState === "awaitRoll" && !charityPending && !selectedCard;
-  const canEndTurn = (turnState === "awaitEnd" || turnState === "awaitCharity") && !selectedCard;
+  const charityPending = charityPrompt && charityPrompt.playerId === myPlayer?.id;
+  const canRoll = turnState === "awaitRoll" && !charityPending && !selectedCard && isMyTurn;
+  const canEndTurn = (turnState === "awaitEnd" || turnState === "awaitCharity") && !selectedCard && isMyTurn;
 
   const canDrawDeck = (deck: DeckKey) => {
+    if (!isMyTurn) return false;
     if (turnState !== "awaitAction") return false;
     if (!currentPlayer || currentPlayer.track === "fastTrack") return false;
     if (selectedCard) return false;
@@ -135,9 +151,9 @@ export function ControlPanel() {
     return "controls.buy";
   }, [cardPreview]);
   const isExpense = cardPreview?.primaryAction === "pay";
-  const canPass = Boolean(cardPreview?.canPass) && turnState === "awaitCard";
+  const canPass = Boolean(cardPreview?.canPass) && turnState === "awaitCard" && isMyTurn;
   const requiresCashOnHand = currentPlayer?.track === "fastTrack";
-  const canApply = turnState === "awaitCard" && (!requiresCashOnHand || cardCost <= (currentPlayer?.cash ?? 0));
+  const canApply = turnState === "awaitCard" && isMyTurn && (!requiresCashOnHand || cardCost <= (currentPlayer?.cash ?? 0));
 
   const selectedCardId = selectedCard?.id;
   const activeMarketSession = useMemo(() => {
@@ -145,7 +161,7 @@ export function ControlPanel() {
     return marketSession.cardId === selectedCardId ? marketSession : undefined;
   }, [marketSession, selectedCardId]);
 
-  const hasActivePanel = Boolean(selectedCard) || (charityPrompt && charityPrompt.playerId === currentPlayerId) || (turnState === "awaitLiquidation" && liquidationSession?.playerId === currentPlayer?.id);
+  const hasActivePanel = Boolean(selectedCard) || (charityPrompt && charityPrompt.playerId === myPlayer?.id) || (turnState === "awaitLiquidation" && liquidationSession?.playerId === myPlayer?.id);
 
   const renderDiceRow = () => {
     if (!dice) return null;
@@ -165,7 +181,7 @@ export function ControlPanel() {
   };
 
   const renderCharity = () => {
-    if (!charityPrompt || charityPrompt.playerId !== currentPlayerId) return null;
+    if (!charityPrompt || charityPrompt.playerId !== myPlayer?.id) return null;
     return (
       <div className="charity-panel">
         <strong>{t(settings.locale, "controls.charity.title")}</strong>
@@ -186,8 +202,8 @@ export function ControlPanel() {
   };
 
   const renderLiquidation = () => {
-    if (turnState !== "awaitLiquidation" || !liquidationSession || !currentPlayer || liquidationSession.playerId !== currentPlayer.id) return null;
-    const shortfall = Math.max(liquidationSession.requiredCash - currentPlayer.cash, 0);
+    if (turnState !== "awaitLiquidation" || !liquidationSession || !myPlayer || liquidationSession.playerId !== myPlayer.id) return null;
+    const shortfall = Math.max(liquidationSession.requiredCash - myPlayer.cash, 0);
     return (
       <div className="action-panel">
         <div className="panel-header">
@@ -202,18 +218,18 @@ export function ControlPanel() {
           <dt className="kv-key">{t(settings.locale, "liquidation.required")}</dt>
           <dd className="kv-value">${liquidationSession.requiredCash.toLocaleString()}</dd>
           <dt className="kv-key">{t(settings.locale, "liquidation.cash")}</dt>
-          <dd className="kv-value">${currentPlayer.cash.toLocaleString()}</dd>
+          <dd className="kv-value">${myPlayer.cash.toLocaleString()}</dd>
           <dt className="kv-key">{t(settings.locale, "liquidation.shortfall")}</dt>
           <dd className="kv-value">${shortfall.toLocaleString()}</dd>
         </dl>
 
-        {currentPlayer.assets.length === 0 ? (
+        {myPlayer.assets.length === 0 ? (
           <div className="panel" style={{ background: "rgba(255,255,255,0.02)" }}>
             <div className="text-muted text-sm">{t(settings.locale, "liquidation.noAssets")}</div>
           </div>
         ) : (
           <div className="panel" style={{ background: "rgba(255,255,255,0.02)" }}>
-            {currentPlayer.assets.map((asset) => {
+            {myPlayer.assets.map((asset) => {
               const available = getAssetAvailableQuantity(asset);
               const currentValue = liquidationQuantities[asset.id] ?? Math.min(1, available);
               const normalized = Math.min(Math.max(0, Math.floor(currentValue)), available);
@@ -256,7 +272,7 @@ export function ControlPanel() {
         <div className="action-row">
           <button
             onClick={() => dispatch({ type: "finalizeLiquidation" }, finalizeLiquidation)}
-            disabled={currentPlayer.cash < liquidationSession.requiredCash}
+            disabled={myPlayer.cash < liquidationSession.requiredCash}
             className="btn btn-primary"
             style={{ flex: 1 }}
           >
@@ -264,7 +280,7 @@ export function ControlPanel() {
           </button>
           <button
             onClick={() => dispatch({ type: "finalizeLiquidation" }, finalizeLiquidation)}
-            disabled={currentPlayer.cash >= liquidationSession.requiredCash}
+            disabled={myPlayer.cash >= liquidationSession.requiredCash}
             className="btn btn-secondary"
             style={{ flex: 1 }}
           >
@@ -343,6 +359,7 @@ export function ControlPanel() {
     const shouldUseSession = Boolean(session) && ((isOffer && isSellOffer) || isSecurity);
 
     if (!shouldUseSession) {
+      if (currentPlayerId !== myPlayer?.id) return null;
       return (
         <div className="action-row">
           <button onClick={() => dispatch({ type: "resolveMarket" }, () => resolveMarket())} className="btn btn-primary" style={{ flex: 1 }} data-testid="control-market-resolve-btn">
@@ -359,6 +376,7 @@ export function ControlPanel() {
 
     if (session.stage === "sell") {
       const responderId = session.responders[session.responderIndex];
+      if (responderId !== myPlayer?.id) return null;
       const responder = players.find((player) => player.id === responderId);
       const responderName = responder?.name ?? responderId?.slice(0, 4) ?? "—";
       const normalizedSymbol =
@@ -436,7 +454,7 @@ export function ControlPanel() {
       );
     }
 
-    if (session.stage === "buy" && isSecurity && currentPlayer && currentPlayer.id === currentPlayerId) {
+    if (session.stage === "buy" && isSecurity && currentPlayerId === myPlayer?.id) {
       const buyQuantity = session.buyQuantity ?? 0;
       return (
         <div className="panel-body">
@@ -535,10 +553,28 @@ export function ControlPanel() {
     </>
   );
 
-  const hasContent = charityPending || (turnState === "awaitLiquidation" && liquidationSession?.playerId === currentPlayer?.id) || Boolean(selectedCard);
+  const hasContent = charityPending || (turnState === "awaitLiquidation" && liquidationSession?.playerId === myPlayer?.id) || Boolean(selectedCard);
 
   return (
     <div className="panel" data-tour="control-panel">
+      {!isMyTurn && isMultiplayer && currentPlayer && (
+        <div
+          className="turn-waiting-overlay"
+          style={{
+            padding: "0.75rem 1rem",
+            marginBottom: "0.75rem",
+            borderRadius: 12,
+            background: "rgba(14,165,233,0.15)",
+            border: "1px solid rgba(14,165,233,0.3)",
+            textAlign: "center"
+          }}
+        >
+          <strong style={{ color: "#7dd3fc" }}>{t(settings.locale, "controls.waiting.title")}</strong>
+          <div className="text-muted text-sm">
+            {t(settings.locale, "controls.waiting.message").replace("{name}", currentPlayer.name)}
+          </div>
+        </div>
+      )}
       <div className="action-row">
         <button
           onClick={() => {

@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { useGameStore } from "../lib/state/gameStore";
+import { useMultiplayerStore } from "../lib/multiplayer/syncStore";
 import { t } from "../lib/i18n";
 
 const REPAY_STEP = 1000;
@@ -15,13 +16,21 @@ export function BankLoansPanel() {
     turnState: state.turnState
   }));
 
-  const currentPlayer = useMemo(() => players.find((player) => player.id === currentPlayerId), [players, currentPlayerId]);
+  const playerSlot = useMultiplayerStore((s) => s.playerSlot);
+
+  const viewPlayer = useMemo(() => {
+    if (playerSlot !== null) {
+      return players[playerSlot];
+    }
+    return players.find((player) => player.id === currentPlayerId);
+  }, [players, currentPlayerId, playerSlot]);
+
   const bankLoans = useMemo(
-    () => currentPlayer?.liabilities.filter((liability) => liability.metadata?.bank) ?? [],
-    [currentPlayer]
+    () => viewPlayer?.liabilities.filter((liability) => liability.metadata?.bank) ?? [],
+    [viewPlayer]
   );
 
-  if (!currentPlayer || currentPlayer.track !== "ratRace") {
+  if (!viewPlayer || viewPlayer.track !== "ratRace") {
     return null;
   }
 
@@ -36,8 +45,8 @@ export function BankLoansPanel() {
       <h3 style={{ margin: 0 }}>{t(settings.locale, "bankLoans.title")}</h3>
       <div className="scrollable" style={{ maxHeight: "220px" }}>
         {bankLoans.map((loan) => {
-          const canRepayStep = canRepayNow && loan.balance >= REPAY_STEP && currentPlayer.cash >= REPAY_STEP;
-          const canPayoff = canRepayNow && loan.balance > 0 && currentPlayer.cash >= loan.balance;
+          const canRepayStep = canRepayNow && loan.balance >= REPAY_STEP && viewPlayer.cash >= REPAY_STEP;
+          const canPayoff = canRepayNow && loan.balance > 0 && viewPlayer.cash >= loan.balance;
           return (
             <div key={loan.id} style={{ padding: "0.45rem 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
               <strong>{loan.name}</strong>
