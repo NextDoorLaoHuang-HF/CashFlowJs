@@ -364,12 +364,19 @@ describe("gameEngine", () => {
       const state = createTestState({
         players: [createTestPlayer({ id: "p1", fastTrackUnlocked: true, track: "ratRace", dream: dreams[0] })]
       });
+      const previousPayday = state.players[0].payday;
       const result = makeResult(state);
       enterFastTrack(result, "p1");
       const player = result.state.players.find((p) => p.id === "p1")!;
       expect(player.track).toBe("fastTrack");
       expect(player.position).toBe(0);
-      expect(player.fastTrackTarget).toBe(dreams[0].cost);
+      expect(player.cash).toBe(1000 + previousPayday * 100);
+      expect(player.assets).toHaveLength(0);
+      expect(player.liabilities).toHaveLength(0);
+      expect(player.passiveIncome).toBe(previousPayday + 50000);
+      expect(player.fastTrackTarget).toBe(previousPayday + 50000 + 50000);
+      expect(player.totalExpenses).toBe(0);
+      expect(player.children).toBe(0);
     });
 
     it("does nothing if not unlocked", () => {
