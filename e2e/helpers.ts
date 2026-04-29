@@ -12,8 +12,34 @@ const url = getEnv("NEXT_PUBLIC_SUPABASE_URL");
 const anonKey = getEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
 const serviceKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
 
+async function fetchWithRetry(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  retries = 3,
+  timeoutMs = 30000
+): Promise<Response> {
+  let lastError: Error | undefined;
+  for (let i = 0; i < retries; i++) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(input, { ...init, signal: controller.signal });
+      clearTimeout(id);
+      return response;
+    } catch (err) {
+      clearTimeout(id);
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (i < retries - 1) {
+        await new Promise((r) => setTimeout(r, 1000 * (i + 1)));
+      }
+    }
+  }
+  throw lastError ?? new Error("fetch failed after retries");
+}
+
 const admin = createClient(url, serviceKey, {
   auth: { autoRefreshToken: false, persistSession: false },
+  global: { fetch: fetchWithRetry as typeof fetch },
 });
 
 function getStorageKey() {
@@ -28,9 +54,11 @@ function getStorageKey() {
 export async function createAnonSessions(count: number) {
   const admin = createClient(url, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
+    global: { fetch: fetchWithRetry as typeof fetch },
   });
   const anonClient = createClient(url, anonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
+    global: { fetch: fetchWithRetry as typeof fetch },
   });
 
   const sessions: Array<{
