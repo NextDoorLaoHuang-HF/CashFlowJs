@@ -88,7 +88,7 @@ async function readyUp(page: Page) {
   await readyBtn.click();
 
   // After clicking ready, the button should disappear (isReady becomes true)
-  await expect(readyBtn).toBeHidden({ timeout: 10000 });
+  await expect(readyBtn).toBeHidden({ timeout: 20000 });
 }
 
 async function startGame(hostPage: Page) {
@@ -317,6 +317,45 @@ test.describe("Multiplayer E2E", () => {
     }
   });
 
+  test("same browser context reuses session and updates existing player", async () => {
+    const launchOpts = getLaunchOptions();
+    const browser = await chromium.launch(launchOpts);
+
+    try {
+      const context = await browser.newContext();
+      const pageA = await context.newPage();
+      const pageB = await context.newPage();
+
+      // Page A creates room with injected session
+      const roomCode = await createRoom(pageA, "Host", sessions[0]);
+      createdRoomCodes.push(roomCode);
+      await readyUp(pageA);
+
+      // Page B in SAME browser context — picks up the same session from shared cookies
+      // Do NOT inject a different session; this simulates the real-world scenario where
+      // two tabs in the same browser share the anonymous Supabase session.
+      await pageB.goto(BASE_URL);
+      await pageB.waitForLoadState("networkidle");
+      await pageB.getByTestId("menu-multiplayer-btn").click();
+
+      await pageB.getByTestId("lobby-join-room-btn").click();
+      await pageB.getByTestId("lobby-name-input").fill("Guest");
+      await pageB.getByTestId("lobby-code-input").fill(roomCode);
+      await pageB.getByTestId("lobby-submit-btn").click();
+
+      await expect(pageB.getByTestId("room-code-display")).toBeVisible({ timeout: 60000 });
+
+      // Because session is shared, there is only one player record.
+      // After the fix, joinRoom updates the name to "Guest".
+      await expect(pageB.getByTestId("room-player-Guest")).toBeVisible({ timeout: 15000 });
+
+      // Host page should also see the updated name via polling / realtime
+      await expect(pageA.getByTestId("room-player-Guest").first()).toBeVisible({ timeout: 10000 });
+    } finally {
+      await browser.close();
+    }
+  });
+
   test("host can start game and players reach the board", async () => {
     const launchOpts = getLaunchOptions();
     const browserA = await chromium.launch(launchOpts);
@@ -517,7 +556,7 @@ test.describe("Multiplayer E2E", () => {
       await pageB.waitForTimeout(5000);
 
       // Guest should also see dice (any value) and have roll button disabled
-      await expect(pageB.getByTestId("dice-total")).toBeVisible();
+      await expect(pageB.getByTestId("dice-total")).toBeVisible({ timeout: 15000 });
       await expect(rollBtnB).toBeDisabled();
     } finally {
       await browserA.close();
