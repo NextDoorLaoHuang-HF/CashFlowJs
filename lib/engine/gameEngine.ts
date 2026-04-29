@@ -310,15 +310,13 @@ function resolveRatRaceMove(result: MutableResult, steps: number): void {
   const visitedSquares = calculateVisitedSquares(previousPosition, steps, boardLength);
   const newPosition = visitedSquares[visitedSquares.length - 1] ?? previousPosition;
 
-  // Check if passed Payday
-  const passedPayday = visitedSquares.includes(0) && previousPosition !== 0;
-
   player.position = newPosition;
 
   const square = boardSquares[newPosition];
 
-  if (square.type === "PAYCHECK" || passedPayday) {
-    resolvePayday(result, playerId, previousPosition, steps);
+  const paydayHits = visitedSquares.filter((pos) => boardSquares[pos]?.type === "PAYCHECK").length;
+  if (paydayHits > 0) {
+    resolvePayday(result, playerId, previousPosition, steps, paydayHits);
   }
 
   if (square.type === "OPPORTUNITY") {
@@ -332,20 +330,21 @@ function resolveRatRaceMove(result: MutableResult, steps: number): void {
     drawCard(result, "offers");
   } else if (square.type === "CHARITY") {
     state.turnState = "awaitCharity";
-    const charityAmount = Math.round(player.totalIncome * 0.1);
+    const charityAmount = Math.max(Math.round(player.totalIncome * 0.1), 100);
     state.charityPrompt = { playerId, amount: charityAmount };
     addLog(result, "log.landed.charity", { position: newPosition, amount: charityAmount }, playerId);
   } else if (square.type === "CHILD") {
-    player.children += 1;
-    const childExpense = Math.max(Math.round(player.scenario.salary * 0.056), 100);
-    player.childExpense += childExpense;
-    player.totalExpenses += childExpense;
-    recalcPlayerIncome(player);
-    addLog(result, "log.landed.child", { position: newPosition, children: player.children, childExpense }, playerId);
+    if (player.children < 3) {
+      player.children += 1;
+      const childExpense = Math.max(Math.round(player.scenario.salary * 0.056), 100);
+      player.childExpense += childExpense;
+      player.totalExpenses += childExpense;
+      recalcPlayerIncome(player);
+      addLog(result, "log.landed.child", { position: newPosition, children: player.children, childExpense }, playerId);
+    }
     state.turnState = "awaitEnd";
   } else if (square.type === "DOWNSIZE") {
-    player.skipTurns += 1;
-    // Pay expenses immediately
+    player.skipTurns = Math.max(player.skipTurns, 3);
     const expense = player.totalExpenses;
     const financing = ensureFunds(player, expense);
     if (financing.ok) {
@@ -355,7 +354,6 @@ function resolveRatRaceMove(result: MutableResult, steps: number): void {
       }
       addLog(result, "log.landed.downsize", { position: newPosition, expenses: expense }, playerId);
     } else {
-      // Bankruptcy handling would go here
       addLog(result, "log.bankruptcy", { reason: "downsize" }, playerId);
     }
     state.turnState = "awaitEnd";
@@ -367,36 +365,19 @@ function resolveRatRaceMove(result: MutableResult, steps: number): void {
 
 // ---- resolvePayday ----
 
-function resolvePayday(result: MutableResult, playerId: string, previousPosition: number, stepsMoved: number): void {
+function resolvePayday(result: MutableResult, playerId: string, previousPosition: number, stepsMoved: number, paydayHits: number): void {
   const state = result.state;
   const player = state.players.find((p) => p.id === playerId);
   if (!player) return;
 
-  const payday = player.payday;
+  const payday = player.payday * paydayHits;
   player.cash += payday;
-
-  // Deduct loan payments
-  let loanPayments = 0;
-  player.liabilities.forEach((liability) => {
-    if (liability.balance > 0 && liability.payment > 0) {
-      player.cash -= liability.payment;
-      liability.balance -= liability.payment;
-      loanPayments += liability.payment;
-    }
-  });
-
-  // Joint venture payouts
-  state.ventures.forEach((venture) => {
-    if (venture.status === "active") {
-      applyVentureCashflow(state.players, venture, venture.cashflowImpact);
-    }
-  });
 
   addLog(result, "log.payday", {
     previousPosition,
     stepsMoved,
+    paydayHits,
     payday,
-    loanPayments,
     cash: player.cash
   }, playerId);
 }
@@ -419,15 +400,32 @@ function resolveFastTrackMove(result: MutableResult, steps: number): void {
 
   const square = fastTrackSquares[newPosition];
 
-  if (square.type === "FAST_PAYDAY") {
-    // Fast track payday
-    const payday = 100000; // Simplified
-    player.cash += payday;
-    addLog(result, "log.fastTrack.payday", { position: newPosition, payday }, playerId);
-  } else if (square.type === "FAST_OPPORTUNITY") {
-    state.turnState = "awaitCard";
-    const event = getFastTrackEvent(newPosition);
-    if (event) {
+  const fastHits = visitedSquares.filter((pos) => getFastTrackEvent(pos)?.kind === "payday").length;
+  if (fastHits > 0) {
+    const bonus = player.payday * fastHits;
+    player.cash += bonus;
+    addLog(result, "log.fastTrack.payday", { position: newPosition, hits: fastHits, payday: player.payday, bonus }, playerId);
+  }
+
+  const event = getFastTrackEvent(newPosition);
+
+  switch (event?.kind) {
+    case "passiveBoost": {
+      const params = event.params;
+      const minBoost = typeof params?.minBoost === "number" && Number.isFinite(params.minBoost) ? params.minBoost : 2000;
+      const paydayMultiplier =
+        typeof params?.paydayMultiplier === "number" && Number.isFinite(params.paydayMultiplier) ? params.paydayMultiplier : 0.5;
+      const passiveBoost = Math.max(minBoost, Math.round(player.payday * paydayMultiplier));
+      player.passiveIncome += passiveBoost;
+      recalcPlayerIncome(player);
+      addLog(result, "log.fastTrack.passiveBoost", { position: newPosition, passiveBoost }, playerId);
+      state.turnState = "awaitEnd";
+      break;
+    }
+    case "investment":
+    case "rollPayout":
+    case "rollCashflow": {
+      state.turnState = "awaitCard";
       const params = event.params;
       const title = typeof params?.title === "string" ? params.title : "Fast Track Opportunity";
       const description = typeof params?.description === "string" ? params.description : "";
@@ -451,51 +449,148 @@ function resolveFastTrackMove(result: MutableResult, steps: number): void {
         },
         deckKey: "offers"
       } as BaseCard;
+      addLog(result, "log.fastTrack.opportunity", { position: newPosition }, playerId);
+      return;
     }
-    addLog(result, "log.fastTrack.opportunity", { position: newPosition }, playerId);
-    return;
-  } else if (square.type === "FAST_DONATION") {
-    state.turnState = "awaitCharity";
-    const charityAmount = Math.round(player.totalIncome * 0.1);
-    state.charityPrompt = { playerId, amount: charityAmount };
-    addLog(result, "log.landed.charity", { position: newPosition, amount: charityAmount }, playerId);
-    return;
-  } else if (square.type === "FAST_PENALTY") {
-    // Fast track penalty
-    const event = getFastTrackEvent(newPosition);
-    const params = event?.params;
-    const penalty = typeof params?.penalty === "number" && Number.isFinite(params.penalty) ? Math.max(0, Math.round(params.penalty)) : 0;
-    if (event && penalty > 0) {
-      if (player.cash >= penalty) {
-        player.cash -= penalty;
-        addLog(result, "log.fastTrack.doodad", { position: newPosition, penalty }, playerId);
-      } else {
-        // Fast track liquidation
-        state.liquidationSession = {
-          playerId,
-          requiredCash: penalty,
-          reason: { kind: "fastTrackPenalty", eventId: event.id, squareId: newPosition }
-        };
-        state.turnState = "awaitLiquidation";
-        addLog(result, "log.liquidation.required", { requiredCash: penalty }, playerId);
+    case "donation": {
+      state.turnState = "awaitCharity";
+      const params = event.params;
+      const rate = typeof params?.rate === "number" && Number.isFinite(params.rate) ? params.rate : 0.2;
+      const minDonation = typeof params?.minDonation === "number" && Number.isFinite(params.minDonation) ? params.minDonation : 5000;
+      const charityAmount = Math.max(Math.round(player.totalIncome * rate), minDonation);
+      state.charityPrompt = { playerId, amount: charityAmount };
+      addLog(result, "log.landed.charity", { position: newPosition, amount: charityAmount }, playerId);
+      return;
+    }
+    case "penalty": {
+      const params = event.params;
+      const minPenalty = typeof params?.minPenalty === "number" && Number.isFinite(params.minPenalty) ? params.minPenalty : 3000;
+      const penalty = Math.max(player.totalExpenses, minPenalty);
+      if (penalty > 0) {
+        if (player.cash >= penalty) {
+          player.cash -= penalty;
+          addLog(result, "log.fastTrack.doodad", { position: newPosition, penalty }, playerId);
+        } else {
+          state.liquidationSession = {
+            playerId,
+            requiredCash: penalty,
+            reason: { kind: "fastTrackPenalty", eventId: event.id, squareId: newPosition }
+          };
+          state.turnState = "awaitLiquidation";
+          addLog(result, "log.liquidation.required", { requiredCash: penalty }, playerId);
+          return;
+        }
+      }
+      state.turnState = "awaitEnd";
+      break;
+    }
+    case "doodad": {
+      const params = event.params;
+      const title = typeof params?.title === "string" ? params.title : "Fast Track Doodad";
+      const variant = typeof params?.variant === "string" ? params.variant : "unknown";
+      const doodadIndex =
+        typeof params?.doodadIndex === "number" && Number.isFinite(params.doodadIndex) ? params.doodadIndex : undefined;
+
+      const beforeCash = player.cash;
+      let roll: number | undefined;
+      let paidAmount: number | undefined;
+      let removedAsset:
+        | { id: string; name: string; category: Asset["category"]; cashflow: number; cost: number }
+        | undefined;
+
+      const removeLowestCashflowAsset = () => {
+        if (player.assets.length === 0) return;
+        let lowestIndex = 0;
+        let lowestCashflow = player.assets[0]?.cashflow ?? 0;
+        player.assets.forEach((asset, index) => {
+          const cf = typeof asset.cashflow === "number" && Number.isFinite(asset.cashflow) ? asset.cashflow : 0;
+          if (cf < lowestCashflow) {
+            lowestCashflow = cf;
+            lowestIndex = index;
+          }
+        });
+        const [asset] = player.assets.splice(lowestIndex, 1);
+        if (asset) {
+          removedAsset = {
+            id: asset.id,
+            name: asset.name,
+            category: asset.category,
+            cashflow: asset.cashflow,
+            cost: asset.cost
+          };
+          player.passiveIncome = Math.max(0, player.passiveIncome - asset.cashflow);
+        }
+      };
+
+      if (variant === "healthcare") {
+        const rngResult = nextRngIntInclusive(state.rngState, 1, 6);
+        state.rngState = rngResult.rngState;
+        roll = rngResult.value;
+        if (roll >= 4) {
+          paidAmount = player.cash;
+          player.cash = 0;
+        }
+      } else if (variant === "loseHalfCash") {
+        paidAmount = Math.round(player.cash * 0.5);
+        player.cash = Math.max(0, player.cash - paidAmount);
+      } else if (variant === "loseLowestCashflowAsset") {
+        removeLowestCashflowAsset();
+      } else if (variant === "repairs") {
+        if (player.assets.length > 0) {
+          let lowestAsset = player.assets[0];
+          player.assets.forEach((asset) => {
+            if (asset.cashflow < lowestAsset.cashflow) {
+              lowestAsset = asset;
+            }
+          });
+          const fee = Math.max(0, Math.round(lowestAsset.cashflow * 10));
+          if (fee <= 0) {
+            paidAmount = 0;
+          } else if (player.cash >= fee) {
+            paidAmount = fee;
+            player.cash -= fee;
+          } else {
+            removeLowestCashflowAsset();
+          }
+        }
+      }
+
+      const cashDelta = player.cash - beforeCash;
+      recalcPlayerIncome(player);
+
+      addLog(result, "log.fastTrack.doodad", {
+        position: newPosition,
+        title,
+        variant,
+        doodadIndex,
+        roll,
+        paidAmount,
+        removedAsset,
+        cashDelta
+      }, playerId);
+      state.turnState = "awaitEnd";
+      break;
+    }
+    case "dream": {
+      if (hasReachedFastTrackGoal(player)) {
+        state.phase = "finished";
+        state.turnState = "awaitEnd";
+        addLog(result, "log.fastTrack.dreamAchieved", {
+          dream: player.dream?.id,
+          target: player.fastTrackTarget,
+          passiveIncome: player.passiveIncome
+        }, playerId);
         return;
       }
+      state.turnState = "awaitEnd";
+      break;
     }
+    case "payday":
+    case "noop":
+    default:
+      state.turnState = "awaitEnd";
+      break;
   }
-
-  // Check win condition
-  if (hasReachedFastTrackGoal(player)) {
-    state.phase = "finished";
-    state.turnState = "awaitEnd";
-    addLog(result, "log.fastTrack.dreamAchieved", {
-      dream: player.dream?.id,
-      target: player.fastTrackTarget,
-      passiveIncome: player.passiveIncome
-    }, playerId);
-    return;
-  }
-
-  state.turnState = "awaitEnd";
 }
 
 // ---- drawCard ----
@@ -774,6 +869,8 @@ export function completeDeal(
   // Create asset if applicable
   if (derivePrimaryAction(card) === "buy" && getDeckKey(card)) {
     const assetCost = Math.abs(cashDelta);
+    const businessType = typeof card.businessType === "string" ? card.businessType : undefined;
+    const landType = typeof card.landType === "string" ? card.landType : undefined;
     const asset: Asset = {
       id: `${card.id}-${crypto.randomUUID()}`,
       name: card.name,
@@ -784,7 +881,7 @@ export function completeDeal(
         cardId: card.id,
         cardType: card.type,
         downPayment: typeof card.downPayment === "number" ? card.downPayment : undefined,
-        landType: typeof card.landType === "string" ? card.landType : undefined,
+        landType: businessType ?? landType,
         symbol: typeof card.symbol === "string" ? card.symbol : undefined,
         units: typeof card.units === "number" ? card.units : undefined,
         mortgage: typeof card.mortgage === "number" ? card.mortgage : undefined
@@ -952,11 +1049,25 @@ export function enterFastTrack(result: MutableResult, playerId: string): void {
   const player = state.players.find((p) => p.id === playerId);
   if (!player || !player.fastTrackUnlocked || player.track !== "ratRace") return;
 
-  player.track = "fastTrack";
-  player.position = 0;
-  player.fastTrackTarget = player.dream?.cost ?? 50000;
+  const payday = player.payday;
+  player.cash += payday * 100;
+  player.assets = [];
+  player.liabilities = [];
+  player.passiveIncome = payday + 50000;
+  player.fastTrackTarget = player.passiveIncome + 50000;
+  player.totalExpenses = 0;
+  player.totalIncome = player.passiveIncome;
+  player.payday = player.passiveIncome;
+  player.children = 0;
+  player.childExpense = 0;
 
-  // Reset salary-based income
+  const startSlots = [0, 6, 13, 20, 26, 33, 0, 6];
+  const playerIndex = state.players.findIndex((p) => p.id === playerId);
+  const safeIndex = playerIndex >= 0 ? playerIndex : 0;
+  const slot = startSlots.length > 0 ? startSlots[safeIndex % startSlots.length] : 0;
+  player.position = typeof slot === "number" ? slot : 0;
+  player.track = "fastTrack";
+
   recalcPlayerIncome(player);
 
   addLog(result, "log.fastTrack.entered", {
@@ -1756,24 +1867,33 @@ export function repayLoan(result: MutableResult, loanId: string, amount: number)
 
 export function repayBankLoan(result: MutableResult, liabilityId: string, amount: number): void {
   const state = result.state;
-  // Find the liability across all players
   for (const player of state.players) {
-    const liabilityIndex = player.liabilities.findIndex((l) => l.id === liabilityId);
+    const liabilityIndex = player.liabilities.findIndex((l) => l.id === liabilityId && l.metadata?.bank);
     if (liabilityIndex >= 0) {
       const liability = player.liabilities[liabilityIndex];
-      if (!liability || player.cash < amount) continue;
+      if (!liability || !Number.isFinite(amount)) continue;
+      const wantsPayoff = amount >= liability.balance;
+      const requested = wantsPayoff ? liability.balance : Math.floor(amount / 1000) * 1000;
+      if (requested <= 0) continue;
+      const paymentAmount = Math.min(requested, liability.balance);
+      if (paymentAmount <= 0 || player.cash < paymentAmount) continue;
 
-      const payment = Math.min(amount, liability.balance);
-      player.cash -= payment;
-      liability.balance -= payment;
-      player.totalExpenses -= liability.payment;
+      player.cash -= paymentAmount;
+      liability.balance -= paymentAmount;
+
+      const previousPayment = liability.payment;
+      let updatedPayment = 0;
 
       if (liability.balance <= 0) {
         player.liabilities.splice(liabilityIndex, 1);
+      } else {
+        liability.payment = Math.round(liability.balance * 0.1);
+        updatedPayment = liability.payment;
       }
 
+      player.totalExpenses = Math.max(0, player.totalExpenses - previousPayment + updatedPayment);
       recalcPlayerIncome(player);
-      addLog(result, "log.bank.loanRepaid", { liabilityId, amount: payment, balance: liability.balance }, player.id);
+      addLog(result, "log.bank.loanRepaid", { liabilityId, amount: paymentAmount, balance: liability.balance }, player.id);
       return;
     }
   }
